@@ -1,6 +1,6 @@
 /* ============================================================
-   Справочники: что может лежать в клетке карты
-   ============================================================ */
+Справочники: что может лежать в клетке карты
+============================================================ */
 const Terrain = Object.freeze({ DEEP_WATER: 0, SHALLOW_WATER: 1, PLAIN: 2, MOUNTAIN: 3 });
 const Biome = Object.freeze({ TUNDRA: 0, TAIGA: 1, GRASSLAND: 2, STEPPE: 3, DESERT: 4, SAVANNA: 5 });
 const Shore = Object.freeze({ NONE: 0, BEACH: 1, ROCKY: 2, CLIFF: 3 });
@@ -20,9 +20,17 @@ const ResourceInfo = Object.freeze({
 const ROAD_DIRECTIONS = Object.freeze([[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]);
 
 /* ============================================================
-   Вспомогательные функции
-   ============================================================ */
+    Вспомогательные функции
+    ============================================================ */
 const clamp = (value, min = 0, max = 1) => Math.max(min, Math.min(max, value));
+
+// Хорошо перемешанный хеш числа (0..2^32): соседние номера клеток дают несвязанные значения. Простое умножение давало
+// «решётчатые» узоры — реки бежали параллельными диагональными полосами.
+function hash32(n) {
+    n = Math.imul(n ^ (n >>> 16), 0x85ebca6b);
+    n = Math.imul(n ^ (n >>> 13), 0xc2b2ae35);
+    return (n ^ (n >>> 16)) >>> 0;
+}
 const lerp = (a, b, t) => a + (b - a) * t;
 
 // Генератор псевдослучайных чисел (mulberry32): один и тот же seed даёт одну и ту же последовательность.
@@ -52,8 +60,8 @@ function percentile(values, share) {
 }
 
 /* ============================================================
-   Плавный шум: даёт значения 0..1, соседние точки похожи друг на друга
-   ============================================================ */
+    Плавный шум: даёт значения 0..1, соседние точки похожи друг на друга
+    ============================================================ */
 class ValueNoise {
     constructor(seed) {
         const random = createRandom(seed);
@@ -91,9 +99,9 @@ class ValueNoise {
 }
 
 /* ============================================================
-   MapGenerator
-   Хранит карту в плоских массивах: клетка (x, y) — это индекс y * size + x.
-   ============================================================ */
+    MapGenerator
+    Хранит карту в плоских массивах: клетка (x, y) — это индекс y * size + x.
+    ============================================================ */
 class MapGenerator {
     static get DEFAULTS() {
         return {
@@ -164,10 +172,10 @@ class MapGenerator {
             populationPerHabitability: 10,  // население региона = сумма «обитаемости» его клеток × это число × случайный множитель
             populationVariation: 0.9,       // разброс населения между регионами (больше — больше и крупных городов, и пустых земель)
             settlementMinPopulation: 60,    // меньше — поселения нет; от этого числа поселение имеет уровень 1
-            settlementMaxLevel: 6,          // самый большой уровень поселения (размер рисунка)
+            settlementMaxLevel: 2,          // самый большой уровень поселения (размер рисунка)
             settlementGrowth: 1.8,          // во сколько раз надо увеличить население, чтобы уровень вырос на 1
             secondSettlementPopulation: 900, // у региона с таким населением и больше будет второе поселение
-            settlementSpacing: 2,           // минимум клеток между поселениями
+            settlementSpacing: 1,           // минимум клеток между поселениями
 
             // --- дороги между поселениями ---
             roads: true,
@@ -175,12 +183,13 @@ class MapGenerator {
             roadMaxDistance: 28,            // дальше этого (в клетках) дорог не строим
             roadLoopChance: 0.4,            // шанс добавить «петлю» — вторую по близости дорогу, когда связь уже есть
 
-            // --- реки ---
-            riverCount: 16,
-            riverMaxLength: 250,
-            riverCrossingMin: 8,      // расстояние между переправами (мост / брод) вдоль реки, в клетках
-            riverCrossingMax: 15,
-            riverLevelLength: 20,     // через сколько клеток от истока река становится глубже (всего 3 уровня)
+            // --- реки и озёра ---
+            rainfall: 1,              // сколько воды даёт клетка (во влажных местах больше); больше — больше и шире реки
+            riverThresholds: [60, 180, 480], // сколько воды надо, чтобы появился ручей / река / большая река
+            riverMeander: 0.012,      // насколько русла отклоняются от «кратчайшего» пути (больше — извилистее)
+            lakeDepth: 0.02,          // впадина глубже этого становится озером
+            lakeMinSize: 4,           // озёра меньше этого (в клетках) не создаём
+            riverCrossingChance: 0.1,  // доля подходящих прямых участков рек, где ставится мост или брод
 
             // --- регионы ---
             regionMinSize: 18,
@@ -212,6 +221,7 @@ class MapGenerator {
         this.removeSmallMountains();
         this.removeSmallIslands();
         this.collectLandTiles();
+        this.fillDepressions();
         this.computeWaterDepth();
         this.generateTemperature();
         this.assignBiomes();
@@ -267,7 +277,8 @@ class MapGenerator {
         this.crossing = new Uint8Array(count);        // 0 — нет, 1 — брод, 2 — каменный мост
         this.mountainHeight = new Float32Array(count); // 0 вне гор; 0.3..1 в горах — по нему рисуется рельеф
         this.massif = new Float32Array(count);        // 0..1: крупные «пятна» для горных массивов
-        this.riverPaths = [];                         // клетки каждой реки от истока к устью
+        this.riverTo = new Int32Array(count).fill(-1); // куда течёт река из этой клетки (-1 — не река или сток за краем карты)
+        this.riverFlow = new Uint16Array(count);      // сколько воды проходит через клетку (определяет ширину реки)
         this.waterDepth = new Uint8Array(count);      // 0 на суше; в воде — расстояние до ближайшей суши
         this.biome = new Uint8Array(count);
         this.resource = new Uint8Array(count);
@@ -705,85 +716,127 @@ class MapGenerator {
         });
     }
 
-    /* ---------- 6. Реки ---------- */
+    /* ---------- 6. Реки и озёра ---------- */
+
+    /* Реки — часть рельефа, а не линии, нарисованные поверх: вода стекает по высотам.
+        1) «Заливка впадин» (priority-flood): из моря и краёв карты затопляем сушу от низких мест к высоким; так у каждой
+            клетки появляется сток (flowTo) к морю, а впадины, которые не имеют стока, становятся озёрами.
+        2) Подсчёт стока: дождь выпадает на каждую клетку (во влажных местах больше) и стекает вниз по flowTo; в каждой
+            клетке накапливается вода всех клеток выше по течению. Где её много — там река; чем больше воды, тем река шире.
+        Получаются притоки, слияния, бассейны — как в природе, а не 16 одиноких ручьёв. */
+
+    fillDepressions() {
+        const o = this.options;
+        const size = this.size;
+        const count = size * size;
+        const filled = new Float32Array(count);
+        const flowTo = new Int32Array(count).fill(-1);
+        const done = new Uint8Array(count);
+        const heap = new MinHeap();
+        const jitter = i => (hash32(i) / 4294967296) * o.riverMeander;  // чтобы русла петляли, а не шли по линейке
+
+        for (let i = 0; i < count; i++) {
+            const x = i % size, y = Math.floor(i / size);
+            const onEdge = x === 0 || y === 0 || x === size - 1 || y === size - 1;
+            if (!this.isLand(i)) {
+                done[i] = 1;
+                filled[i] = this.seaLevel;
+                if (this.neighbors8(i).some(j => this.isLand(j))) heap.push(this.seaLevel, i, 0);
+            } else if (onEdge) {
+                done[i] = 1;
+                filled[i] = this.elevation[i] + jitter(i);
+                heap.push(filled[i], i, 0);
+            }
+        }
+        while (heap.size > 0) {
+            const [level, current] = heap.pop();
+            for (const next of this.neighbors8(current)) {
+                if (done[next]) continue;
+                done[next] = 1;
+                flowTo[next] = current;
+                // Шаг заливки случайный (и длиннее по диагонали): на плоских местах русла петляют, а не бегут параллельными прямыми.
+                const step = 2e-4 * (0.3 + 2 * (hash32(next + 7919) / 4294967296)) * (this.isDiagonal(current, next) ? 1.4 : 1);
+                filled[next] = Math.max(this.elevation[next] + jitter(next), level + step);
+                heap.push(filled[next], next, 0);
+            }
+        }
+        this.filled = filled;
+        this.flowTo = flowTo;
+
+        // Озёра: впадины достаточной глубины и размера.
+        const deep = new Uint8Array(count);
+        for (const i of this.landTiles) {
+            if (this.terrain[i] === Terrain.PLAIN && filled[i] - this.elevation[i] > o.lakeDepth) deep[i] = 1;
+        }
+        const seen = new Uint8Array(count);
+        for (const start of this.landTiles) {
+            if (!deep[start] || seen[start]) continue;
+            const queue = [start];
+            seen[start] = 1;
+            for (let head = 0; head < queue.length; head++) {
+                for (const next of this.neighbors(queue[head])) {
+                    if (deep[next] && !seen[next]) { seen[next] = 1; queue.push(next); }
+                }
+            }
+            if (queue.length < o.lakeMinSize) continue;
+            for (const i of queue) {
+                this.terrain[i] = Terrain.DEEP_WATER;
+                this.mountainHeight[i] = 0;
+            }
+        }
+        this.collectLandTiles();
+    }
+
+    isDiagonal(a, b) {
+        return (a % this.size !== b % this.size) && (Math.floor(a / this.size) !== Math.floor(b / this.size));
+    }
 
     generateRivers() {
-        const mountains = this.landTiles.filter(i => this.terrain[i] === Terrain.MOUNTAIN);
-        if (mountains.length === 0) return;
+        const o = this.options;
+        const count = this.size * this.size;
 
-        for (let n = 0; n < this.options.riverCount; n++) {
-            const source = mountains[Math.floor(this.random() * mountains.length)];
-            this.traceRiver(source);
+        // Дождь на каждую клетку суши; воду собираем сверху вниз (от высоких клеток к низким), в том числе через озёра.
+        const flow = new Float32Array(count);
+        const order = [];
+        for (let i = 0; i < count; i++) {
+            if (this.flowTo[i] !== -1) order.push(i);
+            if (this.isLand(i)) flow[i] = o.rainfall * (0.4 + 1.6 * this.moisture[i]) * (this.terrain[i] === Terrain.MOUNTAIN ? 1.3 : 1);
+        }
+        order.sort((a, b) => this.filled[b] - this.filled[a]);
+        for (const i of order) flow[this.flowTo[i]] += flow[i];
+
+        const [first, second, third] = o.riverThresholds;
+        for (const i of this.landTiles) {
+            if (this.terrain[i] !== Terrain.PLAIN || flow[i] < first) continue;
+            this.river[i] = flow[i] >= third ? 3 : flow[i] >= second ? 2 : 1;
+            this.riverFlow[i] = Math.min(65535, Math.round(flow[i]));
+            this.riverTo[i] = this.flowTo[i];
+            this.resource[i] = Resource.NONE;                        // на реке ресурсов нет
         }
     }
 
-    // Река течёт от истока вниз, каждый раз выбирая самого низкого соседа, пока не дойдёт до воды.
-    traceRiver(source) {
-        const visited = new Set();
-        const path = [];
-        let current = source;
-
-        for (let step = 0; step < this.options.riverMaxLength; step++) {
-            visited.add(current);
-            if (this.terrain[current] === Terrain.PLAIN) {
-                // Ниже по течению река глубже: уровень растёт каждые riverLevelLength клеток.
-                const level = Math.min(3, 1 + Math.floor(step / this.options.riverLevelLength));
-                this.river[current] = Math.max(this.river[current], level);
-                this.resource[current] = Resource.NONE; // на реке ресурсов нет
-                path.push(current);
-            }
-
-            const next = this.lowestNeighbor(current, visited);
-            if (next === -1) break;                                        // некуда течь
-            if (!this.isLand(next)) break;                                 // дошли до моря
-            if (this.elevation[next] > this.elevation[current] + 0.02) break; // впереди подъём — река заканчивается
-
-            current = next;
-        }
-        this.riverPaths.push(path);
-    }
-
-    // Небольшой случайный шум делает русло извилистым.
-    lowestNeighbor(i, visited) {
-        let best = -1;
-        let bestHeight = Infinity;
-        for (const j of this.neighbors(i)) {
-            if (visited.has(j)) continue;
-            const height = this.elevation[j] + this.random() * 0.015;
-            if (height < bestHeight) {
-                bestHeight = height;
-                best = j;
-            }
-        }
-        return best;
-    }
-
-    // Переправы: вдоль каждой реки через случайные промежутки берём прямой участок и ставим мост (река глубже 1) или брод.
+    // Переправы: на прямых участках рек (вода входит и выходит в одном направлении) изредка ставим мост (река глубже 1) или брод.
     placeRiverCrossings() {
-        const { riverCrossingMin, riverCrossingMax } = this.options;
-        const gap = () => riverCrossingMin + Math.floor(this.random() * (riverCrossingMax - riverCrossingMin + 1));
-
-        for (const path of this.riverPaths) {
-            let untilNext = gap();
-            for (const tile of path) {
-                if (--untilNext > 0) continue;
-                if (!this.isStraightRiver(tile) || this.neighbors(tile).some(n => this.crossing[n])) continue;
-
-                this.crossing[tile] = this.river[tile] >= 2 ? 2 : 1;
-                untilNext = gap();
+        const size = this.size;
+        const upstream = new Map();                                  // клетка -> реки, впадающие в неё
+        for (const i of this.landTiles) {
+            if (this.river[i] > 0 && this.riverTo[i] !== -1 && this.river[this.riverTo[i]] > 0) {
+                if (!upstream.has(this.riverTo[i])) upstream.set(this.riverTo[i], []);
+                upstream.get(this.riverTo[i]).push(i);
             }
         }
-    }
+        const direction = (from, to) => [(to % size) - (from % size), Math.floor(to / size) - Math.floor(from / size)];
 
-    // Река идёт через клетку прямо: соседи-реки только напротив друг друга.
-    isStraightRiver(i) {
-        const x = i % this.size;
-        const y = Math.floor(i / this.size);
-        const left = x > 0 && this.river[i - 1] > 0;
-        const right = x < this.size - 1 && this.river[i + 1] > 0;
-        const up = y > 0 && this.river[i - this.size] > 0;
-        const down = y < this.size - 1 && this.river[i + this.size] > 0;
-        return (left && right && !up && !down) || (up && down && !left && !right);
+        for (const i of this.landTiles) {
+            if (this.river[i] === 0 || this.riverTo[i] === -1 || this.crossing[i]) continue;
+            const sources = upstream.get(i) || [];
+            if (sources.length !== 1) continue;                       // начало реки или слияние — не место для моста
+            const [ax, ay] = direction(sources[0], i), [bx, by] = direction(i, this.riverTo[i]);
+            if (ax !== bx || ay !== by) continue;                    // поворот
+            if (this.random() > this.options.riverCrossingChance) continue;
+            if (this.neighbors8(i).some(j => this.crossing[j])) continue;
+            this.crossing[i] = this.river[i] >= 2 ? 2 : 1;
+        }
     }
 
     /* ---------- 7. Регионы ---------- */
@@ -1029,9 +1082,9 @@ class MapGenerator {
     /* ---------- 8. Поселения и дороги ---------- */
 
     /* Поселение — ресурс клетки (как пшеница или руда): в клетке либо оно, либо другой ресурс. Оно даёт население
-       и золото; населения в клетке хранится столько, сколько нужно рисунку, чтобы быть тем больше, чем больше жителей.
-       Население региона зависит от «обитаемости» его клеток: плодородные луга, поля, места у рек и побережья — много,
-       пустыня, тундра и горы — мало. Большому региону достаётся ещё и второе поселение. */
+        и золото; населения в клетке хранится столько, сколько нужно рисунку, чтобы быть тем больше, чем больше жителей.
+        Население региона зависит от «обитаемости» его клеток: плодородные луга, поля, места у рек и побережья — много,
+        пустыня, тундра и горы — мало. Большому региону достаётся ещё и второе поселение. */
     placeSettlements() {
         const o = this.options;
         const habitability = this.computeHabitability();
@@ -1125,9 +1178,9 @@ class MapGenerator {
     }
 
     /* Дороги между поселениями по всей карте. Каждое поселение соединяется с ближайшими соседями; рёбра берутся по
-       возрастанию длины, и в «каркас» попадают те, что связывают ещё не связанные группы (как остовное дерево), плюс
-       несколько ближайших пар для петель. Путь ищет A*: горы и вода непроходимы, лес и подъёмы замедляют, а чужие
-       дороги дёшевы — поэтому дороги сливаются в магистрали. Где дорога пересекает реку, ставится мост или брод. */
+        возрастанию длины, и в «каркас» попадают те, что связывают ещё не связанные группы (как остовное дерево), плюс
+        несколько ближайших пар для петель. Путь ищет A*: горы и вода непроходимы, лес и подъёмы замедляют, а чужие
+        дороги дёшевы — поэтому дороги сливаются в магистрали. Где дорога пересекает реку, ставится мост или брод. */
     buildRoads() {
         const o = this.options;
         const list = this.settlements;
@@ -1336,8 +1389,8 @@ class MapGenerator {
 }
 
 /* ============================================================
-   Очередь с приоритетом (двоичная куча): достаёт самый «дешёвый» элемент. Нужна для роста регионов.
-   ============================================================ */
+    Очередь с приоритетом (двоичная куча): достаёт самый «дешёвый» элемент. Нужна для роста регионов.
+    ============================================================ */
 class MinHeap {
     constructor() {
         this.items = [];
@@ -1378,4 +1431,4 @@ class MinHeap {
         }
         return top;
     }
-}
+   }

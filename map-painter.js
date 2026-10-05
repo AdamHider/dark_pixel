@@ -290,6 +290,10 @@ class MapPainter {
             shores: true,          // пляжи, каменистые берега и утёсы
             settlements: true,     // поселения (домики)
             roads: true,           // дороги между поселениями
+            settlementMinHouses: 1, // домиков в самом маленьком поселении
+            settlementMaxHouses: 6, // домиков в самом большом (чем больше население, тем больше домов)
+            roundCoast: 15,         // сколько раз скруглять выпуклые прямые углы берега (0 — не скруглять)
+            spriteOutline: false,  // тёмный контур вокруг построек, руд и эфира (в стиле dark fantasy выключен)
             grade: true,           // в тёмном стиле: цветокоррекция, туман, виньетка
             vignette: 0.35,        // затемнение к краям карты в тёмном стиле (0 — нет)
             props: true,           // в тёмном стиле: кости, вороны, развалины, виселицы
@@ -330,6 +334,7 @@ class MapPainter {
 
         const terrain = view === 'terrain';
         this.paintBase();
+        this.roundCoastCorners();
         if (terrain) {
             this.relief = this.buildReliefHeights();
             this.reliefHeight = this.relief.height;
@@ -337,6 +342,7 @@ class MapPainter {
             this.paintShores();
             this.paintRivers();
             this.paintRoads();
+            this.paintSettlementGround();
         }
         this.paintTexture();
         if (showBorders) this.paintRegionBorders();
@@ -553,6 +559,57 @@ class MapPainter {
         return true;
     }
 
+    /* Скругление берега: выпуклый пиксель суши, у которого вода с двух соседних сторон (а с двух других — суша), —
+       «прямой угол» ступеньки. Такие пиксели заменяем цветом соседней воды; за несколько проходов углы становятся округлыми. */
+    roundCoastCorners() {
+        const passes = this.options.roundCoast;
+        if (!passes) return;
+
+        const map = this.map;
+        const size = map.size;
+        const T = this.tileSize;
+        const W = this.width;
+        const pixels = this.pixels;
+        const water = this.waterMask;
+
+        const coastTiles = [];                          // клетки, рядом с которыми есть и вода, и суша
+        for (let ty = 0; ty < size; ty++) {
+            for (let tx = 0; tx < size; tx++) {
+                let land = false, wet = false;
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        const nx = tx + dx, ny = ty + dy;
+                        if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+                        if (map.isLand(ny * size + nx)) land = true; else wet = true;
+                    }
+                }
+                if (land && wet) coastTiles.push(ty * size + tx);
+            }
+        }
+
+        for (let pass = 0; pass < passes; pass++) {
+            const changes = [];
+            for (const tile of coastTiles) {
+                const x0 = (tile % size) * T, y0 = Math.floor(tile / size) * T;
+                for (let gy = y0; gy < y0 + T; gy++) {
+                    for (let gx = x0; gx < x0 + T; gx++) {
+                        const k = gy * W + gx;
+                        if (water[k]) continue;
+                        const left = gx > 0 && water[k - 1], right = gx < W - 1 && water[k + 1];
+                        const up = gy > 0 && water[k - W], down = gy < W - 1 && water[k + W];
+                        if ((left || right) && (up || down) && !(left && right) && !(up && down)) {
+                            changes.push(k, left ? k - 1 : k + 1);
+                        }
+                    }
+                }
+            }
+            for (let c = 0; c < changes.length; c += 2) {
+                pixels[changes[c]] = pixels[changes[c + 1]];
+                water[changes[c]] = 1;
+            }
+        }
+    }
+
     // Цвет каждой клетки и признак «вода».
     buildTileColors() {
         const count = this.map.size * this.map.size;
@@ -607,12 +664,26 @@ class MapPainter {
         return Math.round(clamp((SNOW_TEMPERATURE - this.seasonalTemperature(i)) / 0.16) * 3) / 3;
     }
 
+    // Клетка рядом с рекой (считается один раз на карту).
+    nearRiver(i) {
+        const map = this.map;
+        if (!this.nearRiverCache || this.nearRiverCache.source !== map.river) {
+            const near = new Uint8Array(map.river.length);
+            for (let k = 0; k < near.length; k++) {
+                if (map.river[k] > 0) for (const j of map.neighbors8(k)) near[j] = 1;
+            }
+            this.nearRiverCache = { source: map.river, near };
+        }
+        return this.nearRiverCache.near[i];
+    }
+
     // Внутри одного биома цвет зависит от плодородия: влажные места гуще и темнее, сухие светлее и желтее.
     fertilityTint(i, color) {
         const biome = this.map.biome[i];
         if (biome === Biome.TUNDRA || biome === Biome.DESERT) return color;
 
-        const moisture = Math.round(this.map.moisture[i] * 5) / 5; // 6 ступеней: меньше «грязи» на стыках клеток
+        const wet = this.nearRiver(i) ? 0.3 : 0;                    // у воды земля влажнее и зеленее
+        const moisture = Math.round(Math.min(1, this.map.moisture[i] + wet) * 5) / 5; // 6 ступеней: меньше «грязи» на стыках клеток
         return moisture > 0.5
             ? shadePacked(color, -0.16 * (moisture - 0.5) / 0.5)
             : mixPacked(color, this.colors.hay, 0.32 * (0.5 - moisture) / 0.5);
@@ -1147,6 +1218,12 @@ class MapPainter {
     /* ---------- 3. Реки ---------- */
 
     // Ширина реки в пикселях по её уровню (глубине).
+    // Ширина реки в клетке по количеству воды: ручей — 2–3 пикселя, большая река у устья — до 14.
+    riverWidthAt(i) {
+        const flow = this.map.riverFlow[i];
+        return Math.max(2, Math.min(this.px(14), Math.round((this.tileSize / 12) * (1 + 0.4 * Math.sqrt(flow)))));
+    }
+
     riverWidth(level) {
         return Math.max(level + 1, this.px([4, 6, 8][level - 1]));
     }
@@ -1160,67 +1237,108 @@ class MapPainter {
        «пиксельная» кромка, как у биомов и берега.
        Сначала строим маску: в каждом пикселе — уровень реки (1..3) или 0. Потом красим её и растушёвываем края дизерингом. */
     paintRivers() {
+        const geometry = this.buildRiverGeometry();
+        this.riverMask = geometry.mask;
+        if (geometry.riverTiles.length === 0) return;
+
+        const { mask, queue, distance, levelNear, solid } = geometry;
+        const T = this.tileSize;
+        const W = this.width;
+        const size = this.map.size;
+        const pixels = this.pixels;
+        const edgeWidth = Math.max(2, T / this.options.coastSharpness);
+        const tileOf = k => Math.floor(Math.floor(k / W) / T) * size + Math.floor((k % W) / T);
+        const iceRiver = tile => this.seasonalTemperature(tile) < RIVER_ICE_TEMPERATURE;
+        const reachPx = Math.ceil(edgeWidth / 2) + 1;
+
+        for (const k of solid) {                                   // сердцевина реки — сплошной цвет
+            const shades = iceRiver(tileOf(k)) ? this.packed.ice : this.packed.riverShades;
+            pixels[k] = shades[mask[k] - 1];
+        }
+        for (const k of queue) {                                   // кромка: дизеринг по расстоянию до края
+            const d = distance[k];
+            const xx = k % W, yy = (k - xx) / W;
+            const shades = iceRiver(tileOf(k)) ? this.packed.ice : this.packed.riverShades;
+            const level = levelNear[k];
+            const threshold = BAYER[(yy & 3) * 4 + (xx & 3)];
+
+            if (d > 0) {
+                const soft = Math.min(edgeWidth, this.riverWidth(level));
+                if (threshold < clamp(0.5 + (d - 0.5) / soft)) pixels[k] = shades[level - 1];
+            } else {
+                const outside = -d;
+                if (threshold < clamp(0.5 - (outside - 0.5) / edgeWidth)) pixels[k] = shades[level - 1];
+                else if (this.options.shores) this.paintBankPixel(xx, yy, k, outside, reachPx);
+            }
+        }
+    }
+
+    /* Форма рек не зависит от сезона, поэтому считается один раз: маска (уровень реки в каждом пикселе), список
+       пикселей кромки с расстоянием до края и список «сердцевины». Кэш сбрасывается при смене карты или параметров резкости. */
+    buildRiverGeometry() {
         const map = this.map;
+        const key = [this.tileSize, this.options.coastSharpness, this.options.blendSharpness, this.options.roundCoast, this.seedSalt].join('|');
+        const cache = this.riverCache;
+        if (cache && cache.source === map.river && cache.key === key) return cache;
+
         const size = map.size;
         const T = this.tileSize;
         const W = this.width;
         const mask = new Uint8Array(W * W);
-        this.riverMask = mask;
 
         const riverTiles = [];
         for (let i = 0; i < map.river.length; i++) {
             if (map.river[i] > 0) riverTiles.push(i);
         }
+        const empty = { source: map.river, key, riverTiles, mask, queue: new Int32Array(0), distance: null, levelNear: null, solid: new Int32Array(0) };
+        if (riverTiles.length === 0) {
+            this.riverCache = empty;
+            return empty;
+        }
 
-        const fill = (px, py, w, h, level) => {
-            for (let yy = py; yy < py + h; yy++) {
-                for (let xx = px; xx < px + w; xx++) {
-                    const k = yy * W + xx;
-                    if (level > mask[k]) mask[k] = level;
+        // 1) форма: каждая клетка реки соединена с клеткой, куда течёт вода (map.riverTo). Отрезок — слегка извилистая полоса,
+        //    ширина которой плавно меняется от клетки к клетке по количеству воды (map.riverFlow); у устья река расширяется.
+        const wobble = this.px(2);
+        const centerOf = tile => {
+            const x = tile % size, y = Math.floor(tile / size);
+            return [x * T + T / 2 + (hashUnit(x, y, 983) - 0.5) * wobble, y * T + T / 2 + (hashUnit(x, y, 984) - 0.5) * wobble];
+        };
+        const stamp = (cx, cy, width, level) => {
+            const radius = width / 2;
+            for (let oy = -Math.ceil(radius); oy <= Math.ceil(radius); oy++) {
+                for (let ox = -Math.ceil(radius); ox <= Math.ceil(radius); ox++) {
+                    if (ox * ox + oy * oy > radius * radius + 0.25) continue;     // круглое «перо», а не квадрат
+                    const x = cx + ox, y = cy + oy;
+                    if (x < 0 || y < 0 || x >= W || y >= W) continue;
+                    const k = y * W + x;
+                    if (!this.waterMask[k] && level > mask[k]) mask[k] = level;
                 }
             }
         };
-        const inMap = (x, y) => x >= 0 && y >= 0 && x < size && y < size;
-        const riverAt = (x, y) => (inMap(x, y) ? map.river[y * size + x] : 0);
-        const waterAt = (x, y) => inMap(x, y) && !map.isLand(y * size + x);
-        const armLength = Math.ceil(T / 2) + 1; // рукав от края клетки чуть заходит за центр
 
-        // 1) форма: центр-«плюс» со срезанными углами + рукава к соседним рекам и воде
         for (const i of riverTiles) {
-            const x = i % size;
-            const y = Math.floor(i / size);
+            const to = map.riverTo[i];
+            if (to === -1) continue;
+            const [ax, ay] = centerOf(i);
+            let [bx, by] = centerOf(to);
+            const toWater = !map.isLand(to);
+            if (toWater) { bx = (ax + bx) / 2; by = (ay + by) / 2; }              // в море река заканчивается у берега
+            const widthFrom = this.riverWidthAt(i);
+            const widthTo = toWater ? Math.round(widthFrom * 1.4) : (map.river[to] > 0 ? this.riverWidthAt(to) : widthFrom);
+
+            const length = Math.hypot(bx - ax, by - ay) || 1;
+            const bend = (hashUnit(i, to, 985) - 0.5) * Math.min(this.px(5), length * 0.8);
+            const mx = (ax + bx) / 2 - ((by - ay) / length) * bend;
+            const my = (ay + by) / 2 + ((bx - ax) / length) * bend;
+            const points = [
+                ...this.linePoints(Math.round(ax), Math.round(ay), Math.round(mx), Math.round(my)),
+                ...this.linePoints(Math.round(mx), Math.round(my), Math.round(bx), Math.round(by))
+            ];
             const level = map.river[i];
-            const width = this.riverWidth(level);
-            const px = x * T;
-            const py = y * T;
-
-            fill(px + this.band(width - 2), py + this.band(width), width - 2, width, level);
-            fill(px + this.band(width), py + this.band(width - 2), width, width - 2, level);
-
-            for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-                const neighborLevel = riverAt(x + dx, y + dy);
-                if (!neighborLevel && !waterAt(x + dx, y + dy)) continue;
-
-                const thickness = neighborLevel ? Math.min(width, this.riverWidth(neighborLevel)) : width;
-                const offset = this.band(thickness);
-                if (dx === -1) fill(px, py + offset, armLength, thickness, level);
-                if (dx === 1) fill(px + T - armLength, py + offset, armLength, thickness, level);
-                if (dy === -1) fill(px + offset, py, thickness, armLength, level);
-                if (dy === 1) fill(px + offset, py + T - armLength, thickness, armLength, level);
-            }
-
-            // Затока (река расширилась на 2×2 клетки и больше): закрываем «дырку» в общем углу четырёх клеток.
-            for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-                if (riverAt(x + dx, y) && riverAt(x, y + dy) && riverAt(x + dx, y + dy)) {
-                    fill(px + (dx < 0 ? 0 : Math.floor(T / 2)), py + (dy < 0 ? 0 : Math.floor(T / 2)), Math.ceil(T / 2), Math.ceil(T / 2), level);
-                }
-            }
+            points.forEach(([px, py], k) => stamp(px, py, widthFrom + (widthTo - widthFrom) * (k / Math.max(1, points.length - 1)), level));
         }
 
-        // 2) мягкая кромка. Для пикселя у края считаем расстояние до края реки (внутри — положительное, снаружи — отрицательное)
-        //    и по нему вероятность речного цвета (дизеринг). Ширина перехода — T / coastSharpness, как у берега моря:
-        //    чем меньше coastSharpness, тем мягче и шире кромка реки и её берега.
-        const pixels = this.pixels;
+        // 2) расстояние до края реки: внутри — положительное, снаружи — отрицательное; ширина перехода из coastSharpness
         const edgeWidth = Math.max(2, T / this.options.coastSharpness);
         const reachPx = Math.ceil(edgeWidth / 2) + 1;
         const distance = new Int8Array(W * W);
@@ -1228,14 +1346,20 @@ class MapPainter {
         const queue = [];
         const at = (xx, yy) => (xx < 0 || yy < 0 || xx >= W || yy >= W ? 0 : mask[yy * W + xx]);
 
+        // Клетки, где может быть вода реки: сами реки и их соседи. Каждый пиксель — один раз.
+        const zone = new Set();
         for (const i of riverTiles) {
-            const x0 = (i % size) * T - 1;
-            const y0 = Math.floor(i / size) * T - 1;
-            for (let yy = y0; yy < y0 + T + 2; yy++) {
-                for (let xx = x0; xx < x0 + T + 2; xx++) {
-                    if (xx < 0 || yy < 0 || xx >= W || yy >= W) continue;
+            zone.add(i);
+            for (const near of map.neighbors8(i)) zone.add(near);
+        }
+        const zoneTiles = [...zone];
+
+        for (const i of zoneTiles) {
+            const x0 = (i % size) * T;
+            const y0 = Math.floor(i / size) * T;
+            for (let yy = y0; yy < y0 + T; yy++) {
+                for (let xx = x0; xx < x0 + T; xx++) {
                     const k = yy * W + xx;
-                    if (distance[k] !== 0) continue;
                     const around = Math.max(at(xx - 1, yy), at(xx + 1, yy), at(xx, yy - 1), at(xx, yy + 1));
                     if (mask[k] > 0 && (at(xx - 1, yy) === 0 || at(xx + 1, yy) === 0 || at(xx, yy - 1) === 0 || at(xx, yy + 1) === 0)) {
                         distance[k] = 1;                       // последний пиксель реки у края
@@ -1266,34 +1390,19 @@ class MapPainter {
             }
         }
 
-        const iceRiver = i => this.seasonalTemperature(i) < RIVER_ICE_TEMPERATURE;
-        for (const i of riverTiles) {                              // сердцевина реки — сплошной цвет
+        const solid = [];
+        for (const i of zoneTiles) {
             const x0 = (i % size) * T, y0 = Math.floor(i / size) * T;
-            const shades = iceRiver(i) ? this.packed.ice : this.packed.riverShades;
             for (let yy = y0; yy < y0 + T; yy++) {
                 for (let xx = x0; xx < x0 + T; xx++) {
                     const k = yy * W + xx;
-                    if (mask[k] > 0 && distance[k] === 0) pixels[k] = shades[mask[k] - 1];
+                    if (mask[k] > 0 && distance[k] === 0) solid.push(k);
                 }
             }
         }
-        for (const k of queue) {                                   // кромка: дизеринг по расстоянию до края
-            const d = distance[k];
-            const xx = k % W, yy = (k - xx) / W;
-            const tile = Math.floor(yy / T) * size + Math.floor(xx / T);
-            const shades = iceRiver(tile) ? this.packed.ice : this.packed.riverShades;
-            const level = levelNear[k];
-            const threshold = BAYER[(yy & 3) * 4 + (xx & 3)];
 
-            if (d > 0) {
-                const soft = Math.min(edgeWidth, this.riverWidth(level));
-                if (threshold < clamp(0.5 + (d - 0.5) / soft)) pixels[k] = shades[level - 1];
-            } else {
-                const outside = -d;
-                if (threshold < clamp(0.5 - (outside - 0.5) / edgeWidth)) pixels[k] = shades[level - 1];
-                else if (this.options.shores) this.paintBankPixel(xx, yy, k, outside, reachPx);
-            }
-        }
+        this.riverCache = { source: map.river, key, riverTiles, mask, queue: Int32Array.from(queue), distance, levelNear, solid: Int32Array.from(solid) };
+        return this.riverCache;
     }
 
     // Берег реки: у пляжных клеток песок, у каменистых галька, иначе — тёмная мокрая земля. Чем дальше от воды, тем реже.
@@ -1605,35 +1714,55 @@ class MapPainter {
         const map = this.map;
         if (!this.options.roads || !map.roadLinks) return;
 
+        const geometry = this.buildRoadGeometry();
+        const c = this.colors;
+        const dirt = this.moodize(c.dirt), light = this.moodize(c.dirtLight), mud = this.moodize(c.mud);
+        const kinds = [dirt, light, mud];
+        const W = this.width;
+        const size = map.size;
+        const T = this.tileSize;
+        const pixels = this.pixels;
+        const tileOf = k => Math.floor(Math.floor(k / W) / T) * size + Math.floor((k % W) / T);
+
+        for (const k of geometry.halo) pixels[k] = mixPacked(pixels[k], dirt, 0.28);
+        for (let n = 0; n < geometry.core.length; n++) {
+            const k = geometry.core[n];
+            let color = kinds[geometry.kind[n]];
+            const snow = this.snowCoverage(tileOf(k));
+            if (snow > 0) color = mixPacked(color, this.packed.snow, 0.75 * snow);
+            pixels[k] = color;
+        }
+    }
+
+    // Пиксели дорог (не зависят от сезона): мягкая полоса утоптанной земли и сама дорога с тремя оттенками.
+    buildRoadGeometry() {
+        const map = this.map;
+        const key = [this.tileSize, this.seedSalt].join('|');
+        const cache = this.roadCache;
+        if (cache && cache.source === map.roadLinks && cache.key === key && cache.riverMask === this.riverMask) return cache;
+
         const size = map.size;
         const T = this.tileSize;
         const W = this.width;
-        const c = this.colors;
-        const dirt = this.moodize(c.dirt), light = this.moodize(c.dirtLight), mud = this.moodize(c.mud);
         const relief = this.reliefHeight;
         const wobble = this.px(2);
+        const halo = new Set();
+        const core = new Map();
 
         const centerOf = (x, y) => [
             x * T + T / 2 + (hashUnit(x, y, 980) - 0.5) * wobble,
             y * T + T / 2 + (hashUnit(x, y, 981) - 0.5) * wobble
         ];
-        const stamp = (cx, cy, width, tile, halo) => {
+        const stamp = (cx, cy, width, isHalo) => {
             for (let oy = 0; oy < width; oy++) {
                 for (let ox = 0; ox < width; ox++) {
                     const x = cx + ox - (width >> 1), y = cy + oy - (width >> 1);
                     if (x < 0 || y < 0 || x >= W || y >= W) continue;
                     const k = y * W + x;
                     if (this.waterMask[k] || (this.riverMask && this.riverMask[k]) || (relief && relief[k] > 40)) continue;
-
-                    if (halo) {
-                        this.pixels[k] = mixPacked(this.pixels[k], dirt, 0.28);
-                        continue;
-                    }
+                    if (isHalo) { halo.add(k); continue; }
                     const r = hashUnit(x, y, 975);
-                    let color = r < 0.2 ? light : r < 0.45 ? mud : dirt;
-                    const snow = this.snowCoverage(tile);
-                    if (snow > 0) color = mixPacked(color, this.packed.snow, 0.75 * snow);
-                    this.pixels[k] = color;
+                    core.set(k, r < 0.2 ? 1 : r < 0.45 ? 2 : 0);
                 }
             }
         };
@@ -1662,43 +1791,208 @@ class MapPainter {
                     ...this.linePoints(Math.round(ax), Math.round(ay), Math.round(mx), Math.round(my)),
                     ...this.linePoints(Math.round(mx), Math.round(my), Math.round(bx), Math.round(by))
                 ];
-                for (const [px, py] of points) stamp(px, py, width + 2, i, true);
-                for (const [px, py] of points) stamp(px, py, width, i, false);
+                for (const [px, py] of points) stamp(px, py, width + 2, true);
+                for (const [px, py] of points) stamp(px, py, width, false);
             }
-            if (count !== 2) stamp(Math.round(ax), Math.round(ay), this.roadWidth(map.roadLevel[i]) + 1, i, false);   // перекрёсток или конец дороги
+            if (count !== 2) stamp(Math.round(ax), Math.round(ay), this.roadWidth(map.roadLevel[i]) + 1, false);   // перекрёсток или конец дороги
         }
+        for (const k of core.keys()) halo.delete(k);
+
+        this.roadCache = { source: map.roadLinks, key, riverMask: this.riverMask, halo: Int32Array.from(halo), core: Int32Array.from(core.keys()), kind: Uint8Array.from(core.values()) };
+        return this.roadCache;
     }
 
     /* ---------- Поселения ---------- */
 
-    /* Поселение — ресурс клетки; рисуется домиком, и чем больше в клетке населения (уровень 1–6), тем он больше:
-         1–2: небольшой дом (с сарайчиком); 3: дом повыше; 4–5: ещё и второй дом; 6: и каменная башня.
-       Здания имеют тёмный контур и тень, светлые стены и тёмные крыши, чтобы не сливаться с фоном; окна светятся. */
-    collectSettlement(items, x, y, i) {
+    /* Поселение — ресурс клетки, и рисуется оно не одним домом, а небольшой группой домиков вдоль короткой улицы
+       с утоптанной землёй вокруг. Чем больше население (уровень 1–6), тем больше домов — от settlementMinHouses
+       до settlementMaxHouses; в больших поселениях есть каменная часовня. Улица смотрит в сторону дороги, которая
+       приходит в поселение, так что дороги между поселениями «втекают» в эти группы.
+       Раскладка не зависит от сезона и считается один раз; дома могут выходить за границу клетки (поселения
+       стоят не ближе трёх клеток друг к другу). */
+    settlementLayout(x, y, i) {
         const map = this.map;
+        const cache = this.settlementLayoutCache;
+        if (!cache || cache.source !== map.population || cache.tileSize !== this.tileSize || cache.salt !== this.seedSalt) {
+            this.settlementLayoutCache = { source: map.population, tileSize: this.tileSize, salt: this.seedSalt, layouts: new Map() };
+        }
+        const layouts = this.settlementLayoutCache.layouts;
+        if (!layouts.has(i)) layouts.set(i, this.layoutSettlement(x, y, i));
+        return layouts.get(i);
+    }
+
+    layoutSettlement(x, y, i) {
+        const map = this.map;
+        const o = this.options;
         const T = this.tileSize;
+        const W = this.width;
         const level = map.settlementLevel[i] || 1;
-        const snow = this.snowCoverage(i);
+        const maxLevel = (map.options && map.options.settlementMaxLevel) || 6;
+        const rnd = n => hashUnit(x, y, 1000 + n);
         const n = value => Math.max(1, this.px(value));
-        const cx = x * T + Math.round(T / 2) + Math.round((hashUnit(x, y, 990) - 0.5) * this.px(2));
-        const base = y * T + Math.round(T * 0.8);
 
-        const mainWidth = n(5 + level);
-        const parts = [{
-            dx: 0, dy: 0, kind: 'house', w: mainWidth,
-            bodyH: n(3 + (level >= 4 ? 1 : 0) + (level >= 6 ? 1 : 0)),
-            roofH: n(3 + (level >= 3 ? 1 : 0) + (level >= 5 ? 1 : 0))
-        }];
-        if (level >= 2) parts.push({ dx: -Math.round(mainWidth / 2 + n(3)), dy: 1, kind: 'hut', w: n(4), bodyH: n(2), roofH: n(2) });
-        if (level >= 4) parts.push({ dx: Math.round(mainWidth / 2 + n(4)), dy: -1, kind: 'house', w: n(6), bodyH: n(3), roofH: n(3) });
-        if (level >= 6) parts.push({ dx: -Math.round(mainWidth / 2 + n(8)), dy: -2, kind: 'tower', w: n(4), bodyH: n(7), roofH: n(4) });
+        // сколько домов
+        const share = (level - 1) / Math.max(1, maxLevel - 1);
+        const count = clamp(Math.round(o.settlementMinHouses + share * (o.settlementMaxHouses - o.settlementMinHouses) + (rnd(0) - 0.5) * 0.9),
+            o.settlementMinHouses, o.settlementMaxHouses);
 
-        parts.forEach((part, k) => {
-            const partX = cx + part.dx;
-            const partBase = base + part.dy;
-            const sprite = this.houseSprite(part, hashUnit(x, y, 991 + k), snow);
-            items.push({ y: partBase, x: partX, draw: () => this.drawHouse(sprite, partX, partBase, part, level) });
-        });
+        // направление улицы: туда, куда уходит дорога из поселения
+        const cx = x * T + T / 2;
+        const cy = y * T + T * 0.62;
+        let angle = rnd(1) * Math.PI;
+        const links = map.roadLinks[i];
+        for (let d = 0; d < 8 && links; d++) {
+            if (links & (1 << d)) { angle = Math.atan2(ROAD_DIRECTIONS[d][1], ROAD_DIRECTIONS[d][0]); break; }
+        }
+        const ux = Math.cos(angle), uy = Math.sin(angle), vx = -uy, vy = ux;
+
+        const usable = (px, py) => {
+            if (px < 0 || py < 0 || px >= W || py >= W) return false;
+            const k = py * W + px;
+            return !this.waterMask[k] && !(this.riverMask && this.riverMask[k]) && !(this.reliefHeight && this.reliefHeight[k] > 40);
+        };
+        const occupied = new Set();
+        const houses = [];
+        const tryPlace = (centerX, baseY, w, bodyH, roofH, kind) => {
+            const left = Math.round(centerX - w / 2);
+            const base = Math.round(baseY);
+            const top = base - bodyH;
+            for (let yy = top - roofH; yy <= base + 1; yy++) {
+                for (let xx = left - 1; xx <= left + w; xx++) {
+                    if (!usable(xx, yy) || occupied.has(yy * W + xx)) return false;
+                }
+            }
+            for (let yy = top - roofH; yy <= base + 1; yy++) {
+                for (let xx = left - 1; xx <= left + w; xx++) occupied.add(yy * W + xx);
+            }
+            houses.push({ x: left + (w >> 1), base, w, bodyH, roofH, kind, roll: rnd(10 + houses.length) });
+            return true;
+        };
+
+        const spacing = n(9);
+        let slots = count;
+        if (level >= 5 && count >= 4) {                         // каменная часовня в конце улицы
+            for (let offset = 0; offset <= n(6) && slots === count; offset++) {
+                const along = spacing * (count / 4 + 0.6);
+                if (tryPlace(cx + ux * along + vx * offset, cy + uy * along + vy * offset, n(5), n(5), n(6), 'tower')) slots--;
+            }
+        }
+
+        let placed = 0;
+        for (let k = 0; k < slots * 4 && placed < slots; k++) {
+            const side = k % 2 ? 1 : -1;
+            const along = (Math.floor(k / 2) - (slots - 1) / 4) * spacing + (rnd(20 + k) - 0.5) * n(3);
+            const kind = rnd(40 + k) < 0.3 && level < 4 ? 'hut' : 'house';
+            const w = kind === 'hut' ? n(4) : n(5) + Math.floor(rnd(50 + k) * 3);
+            const bodyH = n(3) + (kind === 'house' && rnd(60 + k) < 0.4 ? 1 : 0);
+            const roofH = kind === 'hut' ? n(2) : n(3);
+            const nearest = slots === 1 ? 0 : n(4);               // единственный дом стоит прямо у улицы
+            for (let offset = nearest; offset <= nearest + n(7); offset++) {
+                if (tryPlace(cx + ux * along + vx * side * offset, cy + uy * along + vy * side * offset, w, bodyH, roofH, kind)) {
+                    placed++;
+                    break;
+                }
+            }
+        }
+        for (let attempt = 0; houses.length === 0 && attempt < 12; attempt++) {   // запасной вариант: хоть один дом рядом с центром
+            tryPlace(cx + (rnd(70 + attempt) - 0.5) * n(10), cy + (rnd(90 + attempt) - 0.5) * n(8), n(5), n(3), n(3), 'house');
+        }
+
+        const length = spacing * (slots / 4 + 0.8) + n(5);
+        const blobs = [[cx, cy, n(6)]];
+        for (const house of houses) blobs.push([house.x, house.base - house.bodyH / 2, n(5)]);
+        return {
+            level, houses, blobs,
+            street: [[cx - ux * length, cy - uy * length], [cx + ux * length, cy + uy * length]]
+        };
+    }
+
+    // Утоптанная земля вокруг домов и улица между ними (на земле, до деревьев и границ).
+    paintSettlementGround() {
+        const map = this.map;
+        if (!this.options.settlements || map.settlements.length === 0) return;
+
+        const size = map.size;
+        const W = this.width;
+        const T = this.tileSize;
+        const c = this.colors;
+        const dirt = this.moodize(c.dirt), light = this.moodize(c.dirtLight), mud = this.moodize(c.mud);
+        const streetColors = [dirt, light, mud];
+        const pixels = this.pixels;
+
+        for (const settlement of map.settlements) {
+            const tile = settlement.tile;
+            const ground = this.settlementGround(this.settlementLayout(tile % size, Math.floor(tile / size), tile));
+            const snow = this.snowCoverage(tile);
+            const snowMix = color => (snow > 0 ? mixPacked(color, this.packed.snow, 0.7 * snow) : color);
+
+            for (let n = 0; n < ground.blobIndex.length; n++) {            // мягкие пятна утоптанной земли
+                const k = ground.blobIndex[n];
+                pixels[k] = mixPacked(pixels[k], snowMix(ground.blobMud[n] ? mud : dirt), ground.blobStrength[n] / 255);
+            }
+            for (let n = 0; n < ground.streetIndex.length; n++) {          // улица
+                pixels[ground.streetIndex[n]] = snowMix(streetColors[ground.streetKind[n]]);
+            }
+        }
+    }
+
+    // Пиксели земли поселения (не зависят от сезона): пятна вокруг домов и улица. Считаются один раз для поселения.
+    settlementGround(layout) {
+        if (layout.ground) return layout.ground;
+
+        const W = this.width;
+        const relief = this.reliefHeight;
+        const usable = k => !this.waterMask[k] && !(this.riverMask && this.riverMask[k]) && !(relief && relief[k] > 40);
+        const strengths = new Map();
+        const mudPixels = new Set();
+
+        for (const [bx, by, radius] of layout.blobs) {
+            for (let dy = -radius; dy <= radius; dy++) {
+                for (let dx = -radius; dx <= radius; dx++) {
+                    const distance = Math.hypot(dx, dy);
+                    const px = Math.round(bx + dx), py = Math.round(by + dy);
+                    if (distance > radius || px < 0 || py < 0 || px >= W || py >= W) continue;
+                    const k = py * W + px;
+                    if (!usable(k) || hashUnit(px, py, 977) < 0.12) continue;
+                    const strength = Math.round(255 * 0.55 * Math.pow(1 - distance / radius, 0.7));
+                    if (strength > (strengths.get(k) || 0)) strengths.set(k, strength);
+                    if (hashUnit(px, py, 978) < 0.3) mudPixels.add(k);
+                }
+            }
+        }
+
+        const street = new Map();
+        const [[ax, ay], [bx, by]] = layout.street;
+        const width = Math.max(1, this.px(2));
+        for (const [px, py] of this.linePoints(Math.round(ax), Math.round(ay), Math.round(bx), Math.round(by))) {
+            for (let oy = 0; oy < width; oy++) {
+                for (let ox = 0; ox < width; ox++) {
+                    const x = px + ox - (width >> 1), y = py + oy - (width >> 1);
+                    if (x < 0 || y < 0 || x >= W || y >= W || !usable(y * W + x)) continue;
+                    const r = hashUnit(x, y, 975);
+                    street.set(y * W + x, r < 0.2 ? 1 : r < 0.45 ? 2 : 0);
+                }
+            }
+        }
+
+        const blobKeys = [...strengths.keys()];
+        layout.ground = {
+            blobIndex: Int32Array.from(blobKeys),
+            blobStrength: Uint8Array.from(blobKeys, k => strengths.get(k)),
+            blobMud: Uint8Array.from(blobKeys, k => (mudPixels.has(k) ? 1 : 0)),
+            streetIndex: Int32Array.from(street.keys()),
+            streetKind: Uint8Array.from(street.values())
+        };
+        return layout.ground;
+    }
+
+    collectSettlement(items, x, y, i) {
+        const layout = this.settlementLayout(x, y, i);
+        const snow = this.snowCoverage(i);
+        for (const part of layout.houses) {
+            const sprite = this.houseSprite(part, part.roll, snow);
+            items.push({ y: part.base, x: part.x, draw: () => this.drawHouse(sprite, part.x, part.base, part, layout.level) });
+        }
     }
 
     // Лёгкое приглушение цвета построек в тёмном стиле: они должны оставаться светлее фона.
@@ -1744,7 +2038,7 @@ class MapPainter {
             }
         }
         buffer.rect(left + (part.w >> 1), top + part.bodyH - Math.min(2, part.bodyH - 1), 1, Math.min(2, part.bodyH - 1), c.plank);   // дверь
-        //buffer.outline(c.outline);
+        if (this.options.spriteOutline) buffer.outline(c.outline);
 
         const sprite = {
             buffer, width, height,
@@ -1833,7 +2127,7 @@ class MapPainter {
             buffer.put(sx, sy, oreLight);
             if (!gold && k % 2 === 0) buffer.put(sx + size - 1, sy, oreLight);
         });
-        //buffer.outline(this.colors.outline);
+        if (this.options.spriteOutline) buffer.outline(this.colors.outline);
 
         const sprite = { buffer, width, height, anchorX: mid, anchorY: floor + 1, sparkles: gold ? [[mid - n(3), floor - n(4)], [mid + n(3), floor - n(4)], [mid, floor - n(6)]] : [] };
         this.spriteCache.set(key, sprite);
@@ -1906,7 +2200,7 @@ class MapPainter {
             crystal(middle + n(5), n(2), n(6));
             buffer.ellipse(middle, floor, n(6), 1, dark, mid, dark);
         }
-        //buffer.outline(packRgb(34, 14, 66));
+        if (this.options.spriteOutline) buffer.outline(packRgb(34, 14, 66));
 
         const sprite = { buffer, width, height, anchorX: middle, anchorY: floor + 1 };
         this.spriteCache.set(key, sprite);
@@ -2165,14 +2459,19 @@ class MapPainter {
         const T = this.tileSize;
         const c = this.colors;
         const level = map.river[i];
-        const horizontalFlow = x > 0 && x < map.size - 1 && map.river[i - 1] > 0 && map.river[i + 1] > 0;
+        const to = map.riverTo[i];
+        const flowX = to === -1 ? 0 : (to % map.size) - x;
+        const flowY = to === -1 ? 0 : Math.floor(to / map.size) - y;
+        const horizontalFlow = to === -1
+            ? x > 0 && x < map.size - 1 && map.river[i - 1] > 0 && map.river[i + 1] > 0
+            : Math.abs(flowX) >= Math.abs(flowY);
 
         // Работаем в координатах «вдоль течения» (a) и «поперёк течения» (b), затем переводим в x, y.
         const put = (a, b, w, h, color) => (horizontalFlow
             ? this.rect(x * T + a, y * T + b, w, h, color)
             : this.rect(x * T + b, y * T + a, h, w, color));
         const middle = Math.floor(T / 2);
-        const river = this.riverWidth(level);
+        const river = this.riverWidthAt(i);
 
         if (map.crossing[i] === 2) {
             const length = Math.min(T, river + this.px(4));   // мост выступает за оба берега
