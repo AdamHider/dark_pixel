@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>PNG to SpriteConfig Converter</title>
+</head>
+<body>
+
+    <h2>Конвертер PNG в конфиг SpriteRenderer</h2>
+    <p>Выберите ваш спрайт (`black_warrior.png`):</p>
+    <input type="file" id="upload" accept="image/png">
+    <br><br>
+    <canvas id="canvas" style="display:none;"></canvas>
+    <pre id="output" style="background: #f4f4f4; padding: 15px; border: 1px solid #ccc; max-height: 400px; overflow: auto;"></pre>
+
+    <script>
+        document.getElementById('upload').addEventListener('change', function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    processImage(img);
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        function processImage(img) {
+            const canvas = document.getElementById('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            
+            ctx.drawImage(img, 0, 0);
+            const imgData = ctx.getImageData(0, 0, img.width, img.height);
+            const data = imgData.data;
+
+            const paletteMap = {};
+            const paletteList = [];
+            const charTable = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            
+            let charIndex = 0;
+            const rows = [];
+
+            for (let y = 0; y < img.height; y++) {
+                let rowStr = '';
+                for (let x = 0; x < img.width; x++) {
+                    const idx = (y * img.width + x) * 4;
+                    const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3];
+
+                    if (a < 128) {
+                        rowStr += '.';
+                        continue;
+                    }
+
+                    const hex = `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+                    
+                    if (!paletteMap[hex]) {
+                        if (charIndex >= charTable.length) {
+                            console.error('Слишком много уникальных цветов!');
+                        }
+                        const char = charTable[charIndex++];
+                        paletteMap[hex] = char;
+                        paletteList.push({ char, hex });
+                    }
+
+                    rowStr += paletteMap[hex];
+                }
+                rows.push(rowStr);
+            }
+
+            const paletteObj = {};
+            const legendObj = {};
+            
+            paletteList.forEach((item, index) => {
+                const colorKey = `color_${index + 1}`;
+                paletteObj[colorKey] = item.hex;
+                legendObj[item.char] = colorKey;
+            });
+
+            const spriteConfig = {
+                id: "black_warrior",
+                size: [img.width, img.height],
+                anchor: [Math.floor(img.width / 2), img.height - 2],
+                palette: paletteObj,
+                layers: [
+                    {
+                        shape: 'pixels',
+                        x: 0,
+                        y: 0,
+                        rows: rows,
+                        legend: legendObj
+                    }
+                ]
+            };
+
+            const jsonString = JSON.stringify(spriteConfig, null, 2);
+            console.log(jsonString);
+            document.getElementById('output').textContent = jsonString;
+        }
+    </script>
+</body>
+</html>
