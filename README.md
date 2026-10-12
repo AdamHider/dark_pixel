@@ -1,30 +1,29 @@
 # Dark Pixel
 
-Пошаговая стратегия в стиле pixel art на чистом JavaScript (ES-модули, без сборщика).
+Пошаговая стратегия в стиле pixel art на чистом JavaScript. Исходники — ES-модули в `src/`, для запуска они собираются в один файл `dist/game.js` (esbuild).
 
 ## Запуск
 
-ES-модули не загружаются при открытии `index.html` напрямую (`file://`), нужен любой локальный сервер:
+Откройте `index.html` в браузере — он подключает собранный `dist/game.js`, сервер не нужен.
 
-```bash
-npm start                       # http-server на http://localhost:8080
-# или
-python3 -m http.server 8080
-```
+## Разработка
 
-Либо расширение Live Server в VS Code.
-
-## Проверка кода
+После правок в `src/` пересоберите `dist/game.js`:
 
 ```bash
 npm install
+npm run build      # однократная сборка
+npm run watch      # пересборка при каждом сохранении
 npm run lint
 ```
+
+`dist/game.js` хранится в репозитории, чтобы игра запускалась без Node. Не редактируйте его вручную.
 
 ## Структура
 
 ```
 index.html                 разметка интерфейса
+dist/game.js               собранный бандл (npm run build)
 css/main.css               стили
 src/
   main.js                  точка входа: генератор + рендерер + кнопки
