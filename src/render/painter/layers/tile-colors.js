@@ -39,10 +39,6 @@ export const tileColors = {
             return hslToPacked(hue, 60, isWater ? 36 : 52);
         }
         if (isWater) return this.waterColor(i);
-        if (this.view === 'factions') {
-            const f = this.map.factionId ? this.map.factionId[i] : -1;
-            if (f >= 0) return this.factionColor(f);
-        }
         if (this.view === 'diplomacy' && !isWater) {
             const f = this.map.factionId ? this.map.factionId[i] : -1;
             if (f >= 0) {
@@ -54,8 +50,16 @@ export const tileColors = {
             }
         }
         if (this.view === 'regions') return hslToPacked((map.regionId[i] * 137.5) % 360, 45, 58); // «золотой угол»: соседи разного цвета
-        if (terrain === Terrain.MOUNTAIN) return this.packed.rock; // под рельефом — камень
-        return this.groundColor(i);
+
+        const color = terrain === Terrain.MOUNTAIN ? this.packed.rock : this.groundColor(i); // под рельефом — камень
+
+        /* Режим «Фракции» — это подсветка (overlay): рельеф остаётся виден, а поверх него клетка мягко
+           подкрашивается цветом своей фракции. Вода никогда не принадлежит фракции, поэтому её не трогаем. */
+        if (this.view === 'factions') {
+            const f = map.factionId ? map.factionId[i] : -1;
+            if (f >= 0) return mixPacked(color, this.factionColor(f), this.options.factionOverlayAlpha);
+        }
+        return color;
     },
 
     // Вода темнее по мере удаления от берега — и в океане, и в озёрах. В холод у берега появляется лёд.

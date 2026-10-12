@@ -445,6 +445,9 @@
       }));
       this.collectFactionRegions(regionIds);
       this.assignIslandsByProximity(regionIds);
+      for (let i = 0; i < this.terrain.length; i++) {
+        if (!this.isLand(i)) this.factionId[i] = -1;
+      }
       this.countFactionSizes();
     },
     // Культура фракции: сдвиг от id, чтобы раскладка культур была неочевидной, но воспроизводимой.
@@ -2405,7 +2408,7 @@
       const { colors, water } = this.buildTileColors();
       this.tileColors = colors;
       this.tileWater = water;
-      const smooth = this.view !== "regions" && this.view !== "factions";
+      const smooth = this.view !== "regions";
       const quadOf = this.blendGrid().quadOf;
       const quadColors = new Int32Array(16);
       const quadWater = new Uint8Array(16);
@@ -2589,7 +2592,7 @@
       const top = a + (b - a) * u;
       return top + (c + (d - c) * u - top) * v;
     },
-    // Границы регионов: мягкая тень вдоль края региона, изрезанная крупным шумом.
+    // Границы регионов: плотная тёмная кромка вдоль края региона, изрезанная крупным шумом.
     paintRegionBorders() {
       const { size, regionId } = this.map;
       const T = this.tileSize;
@@ -2597,7 +2600,7 @@
       const pixels = this.pixels;
       const relief2 = this.reliefHeight;
       const ink = this.colors.regionBorder;
-      const radius = Math.max(2, this.px(4));
+      const radius = Math.max(2, this.px(3));
       for (let tile = 0; tile < size * size; tile++) {
         const id = regionId[tile];
         if (id === -1) continue;
@@ -2613,16 +2616,16 @@
           for (let ox = 0; ox < T; ox++) {
             const gx = x0 + ox;
             const k = gy * W + gx;
+            if (this.waterMask && this.waterMask[k]) continue;
             if (this.riverMask && this.riverMask[k]) continue;
             const toRight = edgeRight ? T - ox : Infinity;
             const toBottom = edgeBelow ? T - oy : Infinity;
             const dist = Math.min(toRight, toBottom);
             if (dist > radius) continue;
-            const d = dist - this.borderNoise(gx, gy) * radius * 0.9;
+            const d = dist - this.borderNoise(gx, gy) * radius;
             if (d >= radius || d <= 0) continue;
-            let alpha = d / radius * 0.5;
-            if (relief2) alpha *= 0.4 + 0.6 * (1 - Math.min(1, relief2[k] / 110));
-            if (BAYER[(gy & 3) * 4 + (gx & 3)] >= alpha * 2) continue;
+            let alpha = 0.85;
+            if (relief2) alpha *= 0.5 + 0.5 * (1 - Math.min(1, relief2[k] / 110));
             pixels[k] = mixPacked(pixels[k], ink, alpha);
           }
         }
@@ -2650,7 +2653,7 @@
       const W = this.width;
       const pixels = this.pixels;
       const ink = this.colors.factionBorder;
-      const radius = Math.max(2, this.px(5));
+      const radius = Math.max(3, this.px(6));
       for (let tile = 0; tile < size * size; tile++) {
         const id = factionId[tile];
         if (id < 0) continue;
@@ -2660,24 +2663,24 @@
         const edgeRight = tx < size - 1 && right >= 0 && right !== id;
         const edgeBelow = ty < size - 1 && below >= 0 && below !== id;
         if (!edgeRight && !edgeBelow) continue;
+        const color = this.factionColor(id);
         const x0 = tx * T, y0 = ty * T;
         for (let oy = 0; oy < T; oy++) {
           const gy = y0 + oy;
           for (let ox = 0; ox < T; ox++) {
             const gx = x0 + ox;
             const k = gy * W + gx;
+            if (this.waterMask && this.waterMask[k]) continue;
             if (this.riverMask && this.riverMask[k]) continue;
             const toRight = edgeRight ? T - ox : Infinity;
             const toBottom = edgeBelow ? T - oy : Infinity;
             const dist = Math.min(toRight, toBottom);
             if (dist > radius) continue;
-            const d = dist - this.factionNoise(gx, gy) * radius * 0.9;
+            const d = dist - this.factionNoise(gx, gy) * radius;
             if (d >= radius || d <= 0) continue;
-            const alpha = d / radius * 0.9;
-            if (BAYER[(gy & 3) * 4 + (gx & 3)] >= alpha * 2) continue;
-            const status = this.diplomacyColor(id, edgeRight ? right : below) || ink;
-            pixels[k] = mixPacked(pixels[k], status, alpha * 0.75);
-            pixels[k] = mixPacked(pixels[k], this.factionColor(id), alpha * 0.85);
+            const status = this.diplomacyColor(id, edgeRight ? right : below);
+            pixels[k] = mixPacked(pixels[k], ink, 0.9);
+            pixels[k] = mixPacked(pixels[k], status || color, 0.85);
           }
         }
       }
@@ -4413,10 +4416,6 @@
         return hslToPacked(hue, 60, isWater ? 36 : 52);
       }
       if (isWater) return this.waterColor(i);
-      if (this.view === "factions") {
-        const f = this.map.factionId ? this.map.factionId[i] : -1;
-        if (f >= 0) return this.factionColor(f);
-      }
       if (this.view === "diplomacy" && !isWater) {
         const f = this.map.factionId ? this.map.factionId[i] : -1;
         if (f >= 0) {
@@ -4428,8 +4427,12 @@
         }
       }
       if (this.view === "regions") return hslToPacked(map.regionId[i] * 137.5 % 360, 45, 58);
-      if (terrain2 === Terrain.MOUNTAIN) return this.packed.rock;
-      return this.groundColor(i);
+      const color = terrain2 === Terrain.MOUNTAIN ? this.packed.rock : this.groundColor(i);
+      if (this.view === "factions") {
+        const f = map.factionId ? map.factionId[i] : -1;
+        if (f >= 0) return mixPacked(color, this.factionColor(f), this.options.factionOverlayAlpha);
+      }
+      return color;
     },
     // Вода темнее по мере удаления от берега — и в океане, и в озёрах. В холод у берега появляется лёд.
     waterColor(i) {
@@ -4657,6 +4660,8 @@
         // на сколько (доля клетки) основание дома может выйти за границу своей клетки
         spriteOutline: false,
         // тёмный контур вокруг построек, руд и эфира (в стиле dark fantasy выключен)
+        factionOverlayAlpha: 0.42,
+        // 0..1: насколько сильно режим «Фракции» подкрашивает клетки цветом фракции
         grade: true,
         // в тёмном стиле: цветокоррекция, туман, виньетка
         vignette: 0.35,
@@ -5777,26 +5782,26 @@
       this.turn = 1;
       this.currentFaction = 0;
       this.playerFaction = 0;
+      this.factionCount = generator2.factions ? generator2.factions.length : 0;
+      this.relations = /* @__PURE__ */ new Map();
+      this.armies = [];
+      for (let f = 0; f < this.factionCount; f++) this.spawnArmy(f);
       this.treasury = [];
       this.income = [];
-      this.factionCount = generator2.factions ? generator2.factions.length : 0;
       for (let f = 0; f < this.factionCount; f++) {
         this.treasury[f] = START_TREASURY;
         this.income[f] = this.monthlyIncome(f);
       }
-      this.relations = /* @__PURE__ */ new Map();
-      this.armies = [];
-      for (let f = 0; f < this.factionCount; f++) this.spawnArmy(f);
       this.ai = new AIController(this);
       this.tint = generator2.factionColor ? generator2.factionColor.bind(generator2) : () => void 0;
     }
     /* ---------- Ходы ---------- */
     // Полный ход: каждая фракция получает доход и действует. За игрока действует интерфейс, за остальных — ИИ.
     endTurn() {
-      const income = this.advanceTurn();
+      const turn = this.advanceTurn();
       this.ai.takeTurn();
       this.resetArmyMoves();
-      return { turn: this.turn, income };
+      return { turn, income: this.income.slice() };
     }
     // Доход всех фракций и переход «хождения» к следующей фракции (без действий ИИ).
     advanceTurn() {

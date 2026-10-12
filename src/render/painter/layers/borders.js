@@ -1,12 +1,11 @@
 import { mixPacked } from '../../color.js';
-import { BAYER } from '../constants.js';
 import { hashUnit } from '../noise.js';
 
 /* Границы регионов.
 
-   Старая версия рисовала тонкую линию по правому/нижнему краю клетки — получался «дешёвый» прямоугольный контур
-   по сетке. Теперь граница — мягкая тёмная тень: она идёт вдоль края региона и чуть заходит внутрь, к своему
-   центру, а снаружи её ограничивает крупный шум, поэтому линия волнистая, а не по сетке клеток. */
+   Граница — плотная тёмная кромка вдоль края региона: она заходит внутрь своей клетки на фиксированную
+   ширину, а снаружи её ограничивает крупный шум, поэтому линия волнистая, а не строго по сетке клеток.
+   Край всегда плотный (без дизеринга), иначе линия «растворяется» в мелких масштабах. */
 export const borders = {
     // Крупный волнистый шум границы: одна и та же функция для пикселя, поэтому линия непрерывна.
     borderNoise(gx, gy) {
@@ -21,7 +20,7 @@ export const borders = {
         return top + (c + (d - c) * u - top) * v;
     },
 
-    // Границы регионов: мягкая тень вдоль края региона, изрезанная крупным шумом.
+    // Границы регионов: плотная тёмная кромка вдоль края региона, изрезанная крупным шумом.
     paintRegionBorders() {
         const { size, regionId } = this.map;
         const T = this.tileSize;
@@ -29,7 +28,7 @@ export const borders = {
         const pixels = this.pixels;
         const relief = this.reliefHeight;
         const ink = this.colors.regionBorder;
-        const radius = Math.max(2, this.px(4));
+        const radius = Math.max(2, this.px(3));   // ширина кромки внутрь клетки
 
         for (let tile = 0; tile < size * size; tile++) {
             const id = regionId[tile];
@@ -47,18 +46,18 @@ export const borders = {
                 for (let ox = 0; ox < T; ox++) {
                     const gx = x0 + ox;
                     const k = gy * W + gx;
-                    if (this.riverMask && this.riverMask[k]) continue;    // над водой границы не рисуем
+                    if (this.waterMask && this.waterMask[k]) continue;    // по воде границы не рисуем
+                    if (this.riverMask && this.riverMask[k]) continue;    // и над реками
 
                     const toRight = edgeRight ? T - ox : Infinity;        // расстояние до правого края клетки
                     const toBottom = edgeBelow ? T - oy : Infinity;
                     const dist = Math.min(toRight, toBottom);
                     if (dist > radius) continue;
 
-                    const d = dist - this.borderNoise(gx, gy) * radius * 0.9;   // излом: местами вглубь, местами к краю
+                    const d = dist - this.borderNoise(gx, gy) * radius;    // излом: местами вглубь, местами к краю
                     if (d >= radius || d <= 0) continue;
-                    let alpha = (d / radius) * 0.5;
-                    if (relief) alpha *= 0.4 + 0.6 * (1 - Math.min(1, relief[k] / 110));  // в горах границы почти растворяются
-                    if (BAYER[(gy & 3) * 4 + (gx & 3)] >= alpha * 2) continue;   // мягкая пиксельная кромка
+                    let alpha = 0.85;                                      // плотная кромка, без дизеринга
+                    if (relief) alpha *= 0.5 + 0.5 * (1 - Math.min(1, relief[k] / 110)); // в горах границы чуть слабее
                     pixels[k] = mixPacked(pixels[k], ink, alpha);
                 }
             }
