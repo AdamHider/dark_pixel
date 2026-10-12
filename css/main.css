@@ -253,3 +253,52 @@ input[type=checkbox] {
 .eu-panel-body::-webkit-scrollbar { width: 6px; }
 .eu-panel-body::-webkit-scrollbar-track { background: #120e0b; }
 .eu-panel-body::-webkit-scrollbar-thumb { background: var(--eu-gold-dark); }
+
+/* Превью карты в верхней панели: кликом открывает раздел «Дипломатия» */
+.diplo-thumb {
+    position: relative;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 1px solid var(--eu-gold-dark);
+    border-radius: 2px;
+    background: #0d0a08;
+    overflow: hidden;
+    cursor: pointer;
+    flex: none;
+}
+.diplo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.diplo-thumb-icon {
+    position: absolute;
+    right: 1px;
+    bottom: 0;
+    font-size: 10px;
+    text-shadow: 0 0 3px #000, 0 0 3px #000;
+    pointer-events: none;
+}
+
+/* Раздел «Дипломатия»: превью карты и список фракций по культурам */
+.diplo-preview { text-align: center; margin-bottom: 8px; }
+.diplo-preview img {
+    width: 100%;
+    max-width: 220px;
+    image-rendering: pixelated;
+    border: 1px solid var(--eu-panel-border);
+    border-radius: 2px;
+}
+.diplo-list { display: flex; flex-direction: column; gap: 4px; }
+.diplo-row {
+    display: grid;
+    grid-template-columns: 10px 1fr auto auto;
+    align-items: center;
+    gap: 6px;
+    font-size: 8px;
+    color: var(--eu-text);
+    padding: 3px 4px;
+    background: #100d0a;
+    border: 1px solid var(--eu-panel-border);
+    border-radius: 2px;
+}
+.diplo-swatch { width: 10px; height: 10px; border: 1px solid #000; }
+.diplo-culture { color: var(--eu-muted); }
+.diplo-status { color: var(--eu-gold); }

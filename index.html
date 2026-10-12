@@ -22,10 +22,19 @@
     <div class="eu-logo">⚔️ EU4: DARK FANTASY</div>
     
     <div class="eu-resources">
-        <div class="res-item">💰 <span>50</span></div>
-        <div class="res-item">🍞 <span>40</span></div>
-        <div class="res-item">👥 <span>25</span></div>
-        <div class="res-item">⚙️ <span>30</span></div>
+        <div class="res-item" id="turn-resources">Фракций нет</div>
+    </div>
+
+    <button id="diplo-thumb-button" class="diplo-thumb" data-section="diplomacy" title="Дипломатия" aria-label="Открыть дипломатию">
+        <img id="diplo-thumb" alt="">
+        <span class="diplo-thumb-icon">🤝</span>
+    </button>
+
+    <div class="eu-quick-nav">
+        <button data-section="turns">⏳ Ходы</button>
+        <button data-section="economy">💰 Экономика</button>
+        <button data-section="diplomacy">🤝 Дипломатия</button>
+        <button data-section="army">⚔️ Армия</button>
     </div>
 
     <div class="eu-quick-nav">
@@ -58,9 +67,11 @@
                 <button data-view="terrain" aria-pressed="true">Рельеф</button>
                 <button data-view="temperature" aria-pressed="false">Температура</button>
                 <button data-view="regions" aria-pressed="false">Регионы</button>
+                <button data-view="factions" aria-pressed="false">Фракции</button>
                 <button id="settlements" aria-pressed="true">Поселения</button>
             </div>
             <label style="margin-top: 8px;"><input type="checkbox" id="borders" checked> Границы регионов</label>
+            <label style="margin-top: 4px;"><input type="checkbox" id="factions" checked> Границы фракций</label>
         </div>
 
         <div>
@@ -75,7 +86,19 @@
     </div>
 </div>
 
-<!-- 4. ПАНЕЛЬ ИНСПЕКЦИИ КЛЕТКИ / РЕГИОНА -->
+<!-- 4. ПАНЕЛЬ РАЗДЕЛОВ ИГРЫ (ХОДЫ, ЭКОНОМИКА, ДИПЛОМАТИЯ, АРМИЯ) -->
+<div id="sections-panel" class="eu-panel" style="top: 120px; right: 16px" hidden>
+    <div class="eu-panel-header">
+        <h3 class="eu-panel-title" id="sections-title">Раздел</h3>
+        <button class="eu-panel-close" data-toggle-panel="sections-panel">✕</button>
+    </div>
+    <div class="eu-panel-body">
+        <div id="sections-summary" class="selection"></div>
+        <div id="sections-actions" class="grid-2"></div>
+    </div>
+</div>
+
+<!-- 5. ПАНЕЛЬ ИНСПЕКЦИИ КЛЕТКИ / РЕГИОНА -->
 <div id="inspector-panel" class="eu-panel">
     <div class="eu-panel-header">
         <h3 class="eu-panel-title">Информация о Провинции</h3>

@@ -20,7 +20,7 @@ export const shores = {
         const pixels = this.pixels;
         const waterMask = this.waterMask;
         const c = this.colors;
-        const wet = Math.max(1, this.px(2));            // ширина полосы мокрого песка
+        const wet = this.pxMin(2);            // ширина полосы мокрого песка
         const reach = Math.max(3, Math.ceil(wet + this.tileSize / this.options.coastSharpness)); // на сколько пикселей берег уходит вглубь суши (мягче переход — шире полоса)
         const distance = new Uint8Array(W * W);         // суша: расстояние до воды (1..reach)
         const kind = new Uint8Array(W * W);             // суша: тип берега; вода: метка пены
@@ -138,25 +138,14 @@ export const shores = {
         this.paintCliffs();
     },
 
-    /* Тип берега в пикселе: поле «воды», размытое на уровне клеток (как при скруглении берега), даёт долю воды
-       в округе; где воды больше — ближе к берегу. Так границы пляж/галька/утёс идут вдоль скруглённой линии
-       берега, а не по границам клеток. */
+    /* Тип берега в пикселе: клетки берега в округе дают «вес» своему типу; ближе к пикселю — сильнее.
+       Так границы пляж/галька/утёс идут вдоль берега мягко, а не строго по границам клеток. */
     shoreTypeAt(gx, gy) {
         const map = this.map;
         const size = map.size;
         const T = this.tileSize;
-        const field = this.coastField();
-        if (!field) return map.shore[Math.floor(gy / T) * size + Math.floor(gx / T)];
 
-        const axis = this.axis;
-        const { first, second, fraction } = axis;
-        const u = fraction[gx], v = fraction[gy];
-        const a = field[first[gy] * size + first[gx]], b = field[first[gy] * size + second[gx]];
-        const c = field[second[gy] * size + first[gx]], d = field[second[gy] * size + second[gx]];
-        const topRow = a + (b - a) * u;
-        const fv = topRow + (c + (d - c) * u - topRow) * v;
-
-        // Клетки в округе: их близость к берегу и «вес» берега (утёс важнее гальки, галька важнее пляжа).
+        // Клетки в округе: их близость к пикселю и «вес» берега (утёс важнее гальки, галька важнее пляжа).
         const cx = Math.floor(gx / T), cy = Math.floor(gy / T);
         let beach = 0, rocky = 0, cliff = 0, sum = 0;
         for (let dy = -2; dy <= 2; dy++) {
@@ -165,7 +154,7 @@ export const shores = {
                 if (tx < 0 || ty < 0 || tx >= size || ty >= size) continue;
                 const type = map.shore[ty * size + tx];
                 if (!type) continue;
-                const weight = Math.exp(-(dx * dx + dy * dy) / 3) * fv;   // ближе к берегу и ближе к пикселю — сильнее
+                const weight = Math.exp(-(dx * dx + dy * dy) / 3);   // ближе к пикселю — сильнее
                 if (type === Shore.CLIFF) cliff += weight;
                 else if (type === Shore.ROCKY) rocky += weight;
                 else beach += weight;

@@ -4,9 +4,11 @@
    ============================================================ */
 import { MapGenerator } from './map/map-generator.js';
 import { MapRenderer } from './render/renderer/map-renderer.js';
+import { GameState } from './game/game-state.js';
 import { bindChoiceGroup, bindPanelToggles, bindToggle } from './ui/controls.js';
 import { demoObjects } from './ui/demo-objects.js';
 import { describeRegion, describeStats, describeTile } from './ui/describe.js';
+import { createSectionsPanel } from './ui/sections-panel.js';
 
 const generator = new MapGenerator({
     size: 150,
@@ -31,16 +33,64 @@ const generator = new MapGenerator({
 });
 
 const renderer = new MapRenderer(document.getElementById('map'), generator, {
-    // roundCoast: 2,        // 0..3: уровень скругления береговой линии (0 — берег по границам клеток, больше — плавнее)
+    // tileSize: 16,        // размер клетки в пикселях (в игре всегда 16)
 });
 const info = document.getElementById('info');
 const selectionPanel = document.getElementById('selection');
 const seedInput = document.getElementById('seed');
 
+// Состояние партии (ходы, экономика, дипломатия, армия) и панель разделов.
+const gameState = new GameState(generator);
+const sectionsPanel = createSectionsPanel(gameState, {
+    onChange: () => syncGame(),
+    renderDiplomacy: () => renderDiplomacy()
+});
+renderer.setArmyModel(gameState);
+
+// Превью карты (синяя копия) и список фракций с культурой — содержимое раздела «Дипломатия».
+function renderDiplomacy() {
+    const preview = renderer.thumbnail(220);
+    const rows = [];
+    for (let f = 0; f < gameState.factionCount; f++) {
+        const faction = gameState.factionInfo(f);
+        const culture = gameState.cultureOf(f);
+        const you = f === gameState.playerFaction ? ' (вы)' : '';
+        const status = f === gameState.playerFaction ? '—' : relationName(gameState.relationLevel(gameState.playerFaction, f));
+        rows.push(`
+            <div class="diplo-row">
+                <span class="diplo-swatch" style="background:${gameState.cultureColor(f)}"></span>
+                <span class="diplo-name">${faction ? faction.name : `Фракция ${f + 1}`}${you}</span>
+                <span class="diplo-culture">${culture ? culture.name : '—'}</span>
+                <span class="diplo-status">${status}</span>
+            </div>`);
+    }
+    return `
+        <div class="diplo-preview">
+            ${preview ? `<img src="${preview}" alt="Карта" width="220" height="220">` : '<em>нет превью</em>'}
+        </div>
+        <div class="diplo-list">${rows.join('')}</div>`;
+}
+
+function relationName(level) {
+    return { war: 'война', ally: 'союз', neutral: 'нейтрально' }[level] || level;
+}
+
+// Единая синхронизация: после смены состояния обновляем слой армий и панели.
+function syncGame() {
+    renderer.setViewerFaction(gameState.playerFaction);
+    renderer.setArmies(gameState.armies);
+    renderer.setRelations(gameState.relationLevels());
+    const thumb = document.getElementById('diplo-thumb');
+    if (thumb) thumb.src = renderer.thumbnail(64);
+    sectionsPanel.refresh();
+}
+
 function buildMap() {
     generator.generate(Number(seedInput.value) || 1);
     renderer.refresh();
     info.textContent = describeStats(generator);
+    gameState.reset(generator);      // новая карта — новая партия
+    syncGame();
 }
 
 /* ---------- События карты ---------- */
@@ -50,6 +100,15 @@ renderer.onHover = tile => {
 };
 
 renderer.onSelect = (tile, region) => {
+    // Если выбрана армия и клик в пределах достижимой зоны — армия идёт туда.
+    const army = renderer.armySelection;
+    if (army && tile && gameState.canReach(army, tile.index)) {
+        gameState.moveArmy(army.id, tile.index);
+        renderer.clearArmySelection();
+        syncGame();
+        info.textContent = `Отряд перешёл в (${tile.x}, ${tile.y}) · осталось ходов: ${army.moves}`;
+        return;
+    }
     if (!tile) {
         selectionPanel.hidden = true;
         return;
@@ -58,6 +117,17 @@ renderer.onSelect = (tile, region) => {
     selectionPanel.textContent = region
         ? `Клетка ${describeTile(tile)}\n${describeRegion(region)}`
         : `Клетка ${describeTile(tile)}`;
+};
+
+// Клик по армии: своя — выбираем (показать достижимую зону), чужая — просто сведения.
+renderer.onArmyClick = army => {
+    const own = army.faction === gameState.playerFaction;
+    if (!own) {
+        info.textContent = `Отряд фракции ${army.faction + 1} · сила ${army.strength}`;
+        return;
+    }
+    renderer.selectArmy(army);
+    info.textContent = `Отряд выбран · сила ${army.strength} · ходов: ${army.moves}. Кликните клетку в подсвеченной зоне.`;
 };
 
 renderer.onObjectClick = object => {
@@ -72,6 +142,7 @@ document.getElementById('generate').addEventListener('click', () => {
 });
 seedInput.addEventListener('change', buildMap);
 document.getElementById('borders').addEventListener('change', e => renderer.setShowBorders(e.target.checked));
+document.getElementById('factions').addEventListener('change', e => renderer.setShowFactions(e.target.checked));
 document.getElementById('fit').addEventListener('click', () => renderer.fitToView());
 
 bindChoiceGroup('season', season => renderer.setSeason(season));
@@ -80,5 +151,10 @@ bindToggle('demo-objects', on => renderer.setObjects(on ? demoObjects(generator)
 bindToggle('mood', on => renderer.setMood(on ? 'dark' : 'light'));
 bindToggle('settlements', on => renderer.setShowSettlements(on));
 bindPanelToggles();
+
+// Кнопки разделов игры (Ходы, Экономика, Дипломатия, Армия).
+for (const button of document.querySelectorAll('[data-section]')) {
+    button.addEventListener('click', () => sectionsPanel.toggle(button.dataset.section));
+}
 
 buildMap();

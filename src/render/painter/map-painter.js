@@ -1,8 +1,11 @@
 import { hexToPacked, mixPacked, packPalette } from '../color.js';
 import { DARK_SEASONS, SEASONS } from '../seasons.js';
+import { CULTURE_COLORS } from '../../game/cultures.js';
 import { COLORS } from './constants.js';
 import { base } from './layers/base.js';
+import { coast } from './layers/coast.js';
 import { borders } from './layers/borders.js';
+import { factions } from './layers/factions.js';
 import { grading } from './layers/grading.js';
 import { hills } from './layers/hills.js';
 import { minerals } from './layers/minerals.js';
@@ -29,7 +32,7 @@ import { vegetation } from './layers/vegetation.js';
      6. декорации (деревья, поля, руда, разломы) — строго снизу вверх, как в перспективе.
 
    Все рисунки заданы в долях клетки, поэтому размер клетки (tileSize) можно менять.
-   Спрайты рассчитаны на 12 пикселей: функция px(n) переводит «пиксели для клетки 12×12» в текущий размер.
+   Спрайты рассчитаны на 16 пикселей: функция px(n) переводит «пиксели для клетки 16×16» в текущий размер.
    ============================================================ */
 
 /* ============================================================
@@ -39,12 +42,11 @@ export class MapPainter {
     constructor(map, options = {}) {
         this.map = map;
         this.options = {
-            tileSize: 12,
+            tileSize: 16,
             blendSharpness: 1.5,   // насколько резко смешиваются соседние биомы (больше — резче, 1 — очень мягко)
             coastSharpness: 1.5,   // то же для границы воды и суши — а также для берегов (песок, галька) и краёв рек
-            roundCoast: 1,         // 0..3: насколько сильно скругляется береговая линия (0 — берег идёт по границам клеток)
             peakSharpness: 0.75,   // 0..1: острота гор (0 — округлые холмы-«губка», 1 — острые пики и гребни)
-            mountainLift: 14,      // на сколько пикселей (для клетки 12×12) самые высокие горы поднимаются вверх, к северу
+            mountainLift: 14,      // на сколько пикселей (для клетки 16×16) самые высокие горы поднимаются вверх, к северу
             hillStrength: 0.6,     // 0..1: заметность холмов и впадин на равнинах (0 — выключить)
             ravineDensity: 0.5,    // 0..1: сколько оврагов в сухих местах (0 — нет)
             grassDensity: 1,       // густота пучков травы (множитель)
@@ -65,14 +67,21 @@ export class MapPainter {
         this.ctx = this.canvas.getContext('2d');
 
         this.colors = {};
-        for (const [name, hex] of Object.entries(COLORS)) this.colors[name] = hexToPacked(hex);
+        for (const [name, hex] of Object.entries(COLORS)) {
+            this.colors[name] = Array.isArray(hex) ? hex.map(hexToPacked) : hexToPacked(hex);
+        }
+        this.cultureColors = CULTURE_COLORS.map(hexToPacked);   // цвета культур: ими красим владения фракций
     }
 
     /* ---------- Главный метод ---------- */
 
     // view: 'terrain' | 'temperature' | 'regions'. Возвращает холст с готовой картой.
-    paint({ view, seasonName, showBorders, mood }) {
+    // relations — Map «ключ пары фракций -> уровень отношений» ('war' | 'neutral' | 'ally'): им красится граница.
+    // viewerFaction — чья карта: в режиме «Политика» свои земли, союзники, враги и нейтралы красятся по-разному.
+    paint({ view, seasonName, showBorders, showFactions, mood, relations, viewerFaction }) {
         this.view = view;
+        this.relations = relations || null;
+        this.viewerFaction = viewerFaction | 0;
         this.mood = mood === 'dark' ? 'dark' : 'light';
         this.season = (this.mood === 'dark' ? DARK_SEASONS : SEASONS)[seasonName];
         this.pal = this.season.palette;
@@ -95,8 +104,7 @@ export class MapPainter {
 
         const terrain = view === 'terrain';
         this.paintBase();
-        this.smoothCoast();
-        this.decorateWaterMask();
+        this.roundCoastCorners();      // скруглённые углы побережья (вода вместо «выступающих» углов суши)
         if (terrain) {
             this.relief = this.buildReliefHeights();
             this.reliefHeight = this.relief.height;
@@ -108,6 +116,7 @@ export class MapPainter {
         }
         this.paintTexture();
         if (showBorders) this.paintRegionBorders();
+        if (showFactions) this.paintFactionBorders();
         if (terrain) this.paintScene();
 
         if (terrain && this.mood === 'dark' && this.options.grade) this.applyGrading();
@@ -119,9 +128,14 @@ export class MapPainter {
 
     /* ---------- Вспомогательные ---------- */
 
-    // «Пиксели для клетки 12×12» -> пиксели текущей клетки.
+    // «Пиксели для клетки 16×16» -> пиксели текущей клетки.
     px(n) {
-        return Math.round(n * this.tileSize / 12);
+        return Math.round(n * this.tileSize / 16);
+    }
+
+    // То же, но не меньше одного пикселя — для мелких деталей спрайтов.
+    pxMin(n) {
+        return Math.max(1, this.px(n));
     }
 
     forEachTile(callback) {
@@ -169,4 +183,4 @@ export class MapPainter {
     }
 }
 
-Object.assign(MapPainter.prototype, base, tileColors, hills, shores, relief, rivers, texture, grading, props, roads, settlements, minerals, borders, scene, vegetation);
+Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers, texture, grading, props, roads, settlements, minerals, borders, factions, scene, vegetation);

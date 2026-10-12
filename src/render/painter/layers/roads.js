@@ -6,7 +6,7 @@ import { hashUnit } from '../noise.js';
 
 export const roads = {
     roadWidth(level) {
-        return Math.max(1, this.px([2, 3, 4][Math.min(3, Math.max(1, level)) - 1]));
+        return this.pxMin([2, 3, 4][Math.min(3, Math.max(1, level)) - 1]);
     },
 
     /* Дороги строит генератор (map.roadLinks: из каждой клетки — в какие из 8 сторон идёт дорога, map.roadLevel — насколько

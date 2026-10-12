@@ -25,6 +25,7 @@ export function describeTile(tile) {
     if (tile.resource === Resource.SETTLEMENT) parts.push(`население ${tile.population} (уровень ${tile.settlementLevel}, группа из ${tile.settlementGroupSize} кл.)`);
     if (tile.roadLevel > 0) parts.push('дорога');
     if (tile.regionId >= 0) parts.push(`регион #${tile.regionId}, ${tile.regionSize} кв.`);
+    if (tile.factionName) parts.push(`фракция: ${tile.factionName}`);
     return parts.join(' · ');
 }
 
@@ -35,6 +36,7 @@ export function describeRegion(region) {
     const dominantBiome = BIOME_NAMES[region.biomes.indexOf(Math.max(...region.biomes))];
 
     const parts = [`Регион #${region.id}: ${region.size} кв.`, `население региона ${region.population}`, `преобладает ${dominantBiome}`];
+    if (region.factionName) parts.push(`фракция: ${region.factionName}`);
     if (region.mountains > 0) parts.push(`гор: ${region.mountains}`);
     if (region.riverTiles > 0) parts.push(`рек: ${region.riverTiles}`);
     if (region.coastal) parts.push('выход к воде');
