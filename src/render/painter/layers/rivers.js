@@ -11,7 +11,7 @@ export const rivers = {
     // Ширина реки в клетке по количеству воды: ручей — 2–3 пикселя, большая река у устья — до 14.
     riverWidthAt(i) {
         const flow = this.map.riverFlow[i];
-        return Math.max(2, Math.min(this.px(14), Math.round((this.tileSize / 12) * (1 + 0.4 * Math.sqrt(flow)))));
+        return Math.max(2, Math.min(this.px(14), Math.round((this.tileSize / 16) * (1 + 0.4 * Math.sqrt(flow)))));
     },
 
     riverWidth(level) {
@@ -67,7 +67,7 @@ export const rivers = {
        пикселей кромки с расстоянием до края и список «сердцевины». Кэш сбрасывается при смене карты или параметров резкости. */
     buildRiverGeometry() {
         const map = this.map;
-        const key = [this.tileSize, this.options.coastSharpness, this.options.blendSharpness, this.options.coastScale, this.seedSalt].join('|');
+        const key = [this.tileSize, this.options.coastSharpness, this.options.blendSharpness, this.options.shores, this.seedSalt].join('|');
         const cache = this.riverCache;
         if (cache && cache.source === map.river && cache.key === key) return cache;
 

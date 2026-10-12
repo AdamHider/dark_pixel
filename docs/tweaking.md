@@ -7,7 +7,7 @@
 | Что | Где | Как передать |
 | --- | --- | --- |
 | Генерация карты (рельеф, климат, зоны, реки, поселения, дороги) | `src/map/defaults.js` (`DEFAULTS`) | `new MapGenerator({ seed: 7, steppeShare: 0.12 })` |
-| Рисование (размер клетки, скругление берега, горы, дома, свет) | `src/render/painter/map-painter.js` (конструктор) | `new MapRenderer(canvas, generator, { tileSize: 16, coastScale: 1.15 })` |
+| Рисование (размер клетки, горы, дома, свет) | `src/render/painter/map-painter.js` (конструктор) | `new MapRenderer(canvas, generator, { tileSize: 16, peakSharpness: 0.75 })` |
 | Палитры сезонов | `src/render/seasons.js` | правка объектов `SEASONS` / `DARK_SEASONS` |
 | Фиксированные цвета, пороги, ступени | `src/render/painter/constants.js` | правка констант |
 | Коды (типы, биомы, ресурсы) | `src/map/constants.js` | правка констант |
@@ -34,14 +34,13 @@ const renderer = new MapRenderer(canvas, generator, { tileSize: 12 }); // 12 п�
 
 ## Рецепты
 
-### Сделать берега более естественными / более квадратными
+### Сделать берега более естественными
 
-```js
-new MapRenderer(canvas, generator, { coastScale: 2 });  // 0 — квадратные, 2+ — сильно округлые
-```
+Берег рисуется скруглением углов побережья (`roundCoastCorners` в `coast.js`): у прибрежной суши
+подрезаются углы, смотрящие в воду. Радиус — доля клетки, поэтому форма углов одинакова при любом
+`tileSize`. Мягкость полосы берега (пляж/галька) задаёт `coastSharpness`.
 
-Плюс на уровне генерации силуэт берега регулируют `shapeVariety`, `coastDetail`, `warpStrength` в
-`src/map/defaults.js`. `coastScale` меняет **форму линии берега**, `coastSharpness` — **резкость кромки**.
+Силуэт самого берега регулируют `shapeVariety`, `coastDetail`, `warpStrength` в `src/map/defaults.js`.
 
 ### Другие горы
 
@@ -179,7 +178,7 @@ new MapRenderer(canvas, generator, {
 
 - **Не совпадает тип клетки и картинка.** Тип при наведении берётся из данных генератора
   (`getTileInfo`), картинка — из `waterMask`. Следите, чтобы слой, меняющий берег, обновлял `waterMask`
-  (как `smoothCoast`/`decorateWaterMask`).
+  (как `roundCoastCorners`).
 - **Пропали детали после смены `tileSize`.** Значит, где-то использованы абсолютные пиксели вместо `px(n)`.
 - **Слои накладываются не туда.** Проверьте порядок в `paint()` — декорации рисуются снизу вверх
   (`collectDecorations` сортирует по «основанию»).

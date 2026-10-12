@@ -92,17 +92,18 @@ export const rivers = {
         order.sort((a, b) => this.filled[b] - this.filled[a]);
         for (const i of order) flow[this.flowTo[i]] += flow[i];
 
-        const [first, second, third] = o.riverThresholds;
+        const [first] = o.riverThresholds;
         for (const i of this.landTiles) {
             if (this.terrain[i] !== Terrain.PLAIN || flow[i] < first) continue;
-            this.river[i] = flow[i] >= third ? 3 : flow[i] >= second ? 2 : 1;
-            this.riverFlow[i] = Math.min(65535, Math.round(flow[i]));
+            this.river[i] = 1;                                       // у всех рек глубина воды 1 (мелкие, брод по колено)
+            this.riverFlow[i] = Math.min(65535, Math.round(flow[i])); // расход воды: от него зависит ширина русла
             this.riverTo[i] = this.flowTo[i];
             this.resource[i] = Resource.NONE;                        // на реке ресурсов нет
         }
     },
 
-    // Переправы: на прямых участках рек (вода входит и выходит в одном направлении) изредка ставим мост (река глубже 1) или брод.
+    // Переправы: на прямых участках рек (вода входит и выходит в одном направлении) изредка ставим брод.
+    // У всех рек глубина 1, поэтому мосты не нужны — только каменные ступени-броды.
     placeRiverCrossings() {
         const size = this.size;
         const upstream = new Map();                                  // клетка -> реки, впадающие в неё
@@ -122,7 +123,7 @@ export const rivers = {
             if (ax !== bx || ay !== by) continue;                    // поворот
             if (this.random() > this.options.riverCrossingChance) continue;
             if (this.neighbors8(i).some(j => this.crossing[j])) continue;
-            this.crossing[i] = this.river[i] >= 2 ? 2 : 1;
+            this.crossing[i] = 1;                                    // глубина реки 1 — только брод
         }
     },
 };

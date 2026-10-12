@@ -31,7 +31,7 @@ const generator = new MapGenerator({
 });
 
 const renderer = new MapRenderer(document.getElementById('map'), generator, {
-    // coastScale: 1.15,     // масштаб скругления берега (0 — выключить; больше — плавнее, но берег «съедается»)
+    // tileSize: 16,        // размер клетки в пикселях (в игре всегда 16)
 });
 const info = document.getElementById('info');
 const selectionPanel = document.getElementById('selection');

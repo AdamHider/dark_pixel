@@ -59,12 +59,12 @@ Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, reli
   `tileColors`, `tileWater`.
 - **Индексы:** `i` — номер клетки (`y * size + x`), `k` — номер пикселя (`gy * width + gx`), `x`/`y` —
   координаты клетки, `gx`/`gy` — координаты пикселя.
-- **Размеры спрайтов** задаются в «пикселях клетки 12×12» и переводятся через `this.px(n)`. Для мелких
-  деталей — `this.pxMin(n)`, чтобы значение не схлопнулось в 0 при клетке 9. Абсолютные пиксели в спрайтах
+- **Размеры спрайтов** задаются в «пикселях клетки 16×16» и переводятся через `this.px(n)`. Для мелких
+  деталей — `this.pxMin(n)`, чтобы значение не схлопнулось в 0 при маленькой клетке. Абсолютные пиксели в спрайтах
   не пишем.
 - **Детерминированный «случай»** — только через `tileHash(x, y, salt)` / `hashUnit(...)` (см.
   `src/render/painter/noise.js`), чтобы рисунок не менялся при перерисовке.
-- **Кэши:** один объект-кэш на слой (`this.coastFieldCache`, `this.riverCache`, `this.spriteCache`), в
+- **Кэши:** один объект-кэш на слой (`this.riverCache`, `this.spriteCache`), в
   ключе — всё, что влияет на результат (карта, `tileSize`, сезон, стиль). Кэш сравнивается по ссылке на
   исходный массив, а не копируется.
 - **Магические числа** выносим в `options` (конструктор `MapPainter`/`MapGenerator`) или в константы
@@ -105,13 +105,12 @@ this.buildRoads();             // дороги между поселениями
 
 ```js
 this.paintBase();          // 1. цвет каждой клетки + дизеринг границ
-this.smoothCoast();        // 2. скругление береговой линии
-this.decorateWaterMask();  //    (маска воды приводится в соответствие картинке)
+this.roundCoastCorners();  // 2. скругление углов побережья
 if (terrain) {
     this.relief = this.buildReliefHeights();  // карта высот гор
     this.paintHills();                        // 3. тени холмов
     this.paintShores();                       // 4. пляжи, галька, утёсы
-    this.paintRivers();                       // 5. реки, кромка, мосты
+    this.paintRivers();                       // 5. реки, кромка, броды
     this.paintRoads();                        // 6. дороги
     this.paintSettlementGround();             //    площадки под поселения
 }

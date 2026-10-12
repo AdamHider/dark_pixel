@@ -19,7 +19,7 @@ export class MapRenderer {
         this.ctx = canvas.getContext('2d');
         this.map = map;
         this.options = {
-            tileSize: 16,          // размер клетки в пикселях (9, 12, 15...)
+            tileSize: 16,          // размер клетки в пикселях (в игре всегда 16)
             minZoom: 0.1,
             maxZoom: 6,
             zoomStep: 1.15,        // во сколько раз меняется зум за один «щелчок» колеса
