@@ -1,0 +1,68 @@
+import { mixPacked } from '../../color.js';
+import { BAYER } from '../constants.js';
+import { hashUnit } from '../noise.js';
+
+/* Границы фракций.
+
+   Фракция — это группа соседних регионов. Границу рисуем там, где у соседних клеток разные фракции: каждая
+   сторона такой клетки получает цвет своей фракции, поэтому линия сразу показывает, чья земля за ней.
+   Как и у региональных границ, край изрезан крупным шумом, чтобы не выглядел «по сетке», и растворяется
+   над водой и реками. По умолчанию границы фракций видны в режиме карты «Фракции». */
+export const factions = {
+    factionNoise(gx, gy) {
+        const cell = Math.max(8, this.px(20));
+        const fx = gx / cell, fy = gy / cell;
+        const ix = Math.floor(fx), iy = Math.floor(fy);
+        const u = (fx - ix) * (fx - ix) * (3 - 2 * (fx - ix));
+        const v = (fy - iy) * (fy - iy) * (3 - 2 * (fy - iy));
+        const a = hashUnit(ix, iy, 1701), b = hashUnit(ix + 1, iy, 1701);
+        const c = hashUnit(ix, iy + 1, 1701), d = hashUnit(ix + 1, iy + 1, 1701);
+        const top = a + (b - a) * u;
+        return top + (c + (d - c) * u - top) * v;
+    },
+
+    paintFactionBorders() {
+        const { size, factionId } = this.map;
+        if (!factionId) return;
+
+        const T = this.tileSize;
+        const W = this.width;
+        const pixels = this.pixels;
+        const palette = this.colors.factionColors;
+        const ink = this.colors.factionBorder;
+        const radius = Math.max(2, this.px(5));
+
+        for (let tile = 0; tile < size * size; tile++) {
+            const id = factionId[tile];
+            if (id < 0) continue;
+            const tx = tile % size, ty = Math.floor(tile / size);
+            const right = tx < size - 1 ? factionId[tile + 1] : id;
+            const below = ty < size - 1 ? factionId[tile + size] : id;
+            const edgeRight = tx < size - 1 && right >= 0 && right !== id;
+            const edgeBelow = ty < size - 1 && below >= 0 && below !== id;
+            if (!edgeRight && !edgeBelow) continue;
+
+            const x0 = tx * T, y0 = ty * T;
+            for (let oy = 0; oy < T; oy++) {
+                const gy = y0 + oy;
+                for (let ox = 0; ox < T; ox++) {
+                    const gx = x0 + ox;
+                    const k = gy * W + gx;
+                    if (this.riverMask && this.riverMask[k]) continue;    // над реками границы не рисуем
+
+                    const toRight = edgeRight ? T - ox : Infinity;
+                    const toBottom = edgeBelow ? T - oy : Infinity;
+                    const dist = Math.min(toRight, toBottom);
+                    if (dist > radius) continue;
+
+                    const d = dist - this.factionNoise(gx, gy) * radius * 0.9;
+                    if (d >= radius || d <= 0) continue;
+                    const alpha = (d / radius) * 0.9;
+                    if (BAYER[(gy & 3) * 4 + (gx & 3)] >= alpha * 2) continue;   // мягкая пиксельная кромка
+                    pixels[k] = mixPacked(pixels[k], ink, alpha * 0.5);          // тёмная подложка под цвет фракции
+                    pixels[k] = mixPacked(pixels[k], palette[id % palette.length], alpha);
+                }
+            }
+        }
+    },
+};

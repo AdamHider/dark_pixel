@@ -102,8 +102,13 @@ export const rivers = {
         }
     },
 
-    // Переправы: на прямых участках рек (вода входит и выходит в одном направлении) изредка ставим брод.
-    // У всех рек глубина 1, поэтому мосты не нужны — только каменные ступени-броды.
+    // Переправа через реку в клетке i: широкие реки (расход не меньше второго порога) — мост, узкие — брод.
+    // Глубина у всех рек 1, поэтому «мост или брод» решается по ширине русла (расходу воды), а не по глубине.
+    riverCrossingType(i) {
+        return this.riverFlow[i] >= this.options.riverThresholds[1] ? 2 : 1;
+    },
+
+    // Переправы: на прямых участках рек (вода входит и выходит в одном направлении) изредка ставим брод или мост.
     placeRiverCrossings() {
         const size = this.size;
         const upstream = new Map();                                  // клетка -> реки, впадающие в неё
@@ -123,7 +128,7 @@ export const rivers = {
             if (ax !== bx || ay !== by) continue;                    // поворот
             if (this.random() > this.options.riverCrossingChance) continue;
             if (this.neighbors8(i).some(j => this.crossing[j])) continue;
-            this.crossing[i] = 1;                                    // глубина реки 1 — только брод
+            this.crossing[i] = this.riverCrossingType(i);            // широкие реки — мост, узкие — брод
         }
     },
 };

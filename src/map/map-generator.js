@@ -4,6 +4,7 @@ import { Terrain, BIOME_COUNT } from './constants.js';
 import { DEFAULTS } from './defaults.js';
 import { climate } from './steps/climate.js';
 import { elevation } from './steps/elevation.js';
+import { factions } from './steps/factions.js';
 import { regions } from './steps/regions.js';
 import { resources } from './steps/resources.js';
 import { rivers } from './steps/rivers.js';
@@ -50,6 +51,7 @@ export class MapGenerator {
         this.buildRegions();
         this.distributeWheat();
         this.placeSettlements();
+        this.buildFactions();
         this.buildRoads();
         return this;
     }
@@ -109,6 +111,8 @@ export class MapGenerator {
         this.river = new Uint8Array(count);           // 0 — реки нет, 1..3 — её глубина
         this.regionId = new Int16Array(count).fill(-1); // -1 — клетка вне региона (вода)
         this.regionSizes = {};                        // id региона -> число клеток
+        this.factionId = new Int16Array(count).fill(-1); // -1 — клетка вне фракции (вода), иначе id фракции
+        this.factions = [];                           // по записи на фракцию: { id, name, regions, tiles, population }
         this.landTiles = [];                          // индексы всех клеток суши
     }
 
@@ -164,8 +168,15 @@ export class MapGenerator {
             settlements: [],
             coastal: false,
             resources: [0, 0, 0, 0, 0, 0, 0],   // по кодам Resource (0 — клетки без ресурса)
-            biomes: new Array(BIOME_COUNT).fill(0)    // по кодам Biome (без гор)
+            biomes: new Array(BIOME_COUNT).fill(0),    // по кодам Biome (без гор)
+            factionId: -1,
+            factionName: null
         };
+        const factionId = this.factionId ? this.factionId[tiles[0]] : -1;
+        if (factionId >= 0) {
+            info.factionId = factionId;
+            info.factionName = this.factionName(factionId);
+        }
         info.settlements = this.settlements.filter(s => s.regionId === regionId);
         for (const i of tiles) {
             if (this.terrain[i] === Terrain.MOUNTAIN) info.mountains++;
@@ -199,7 +210,9 @@ export class MapGenerator {
             crossing: this.crossing[i],
             waterDepth: this.waterDepth[i],
             regionId,
-            regionSize: regionId >= 0 ? this.regionSizes[regionId] : 0
+            regionSize: regionId >= 0 ? this.regionSizes[regionId] : 0,
+            factionId: this.factionId[i],
+            factionName: this.factionId[i] >= 0 ? this.factionName(this.factionId[i]) : null
         };
     }
 
@@ -212,4 +225,4 @@ export class MapGenerator {
     }
 }
 
-Object.assign(MapGenerator.prototype, elevation, terrain, climate, resources, rivers, regions, settlements, roads);
+Object.assign(MapGenerator.prototype, elevation, terrain, climate, resources, rivers, regions, factions, settlements, roads);

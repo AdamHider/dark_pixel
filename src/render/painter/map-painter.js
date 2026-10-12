@@ -4,6 +4,7 @@ import { COLORS } from './constants.js';
 import { base } from './layers/base.js';
 import { coast } from './layers/coast.js';
 import { borders } from './layers/borders.js';
+import { factions } from './layers/factions.js';
 import { grading } from './layers/grading.js';
 import { hills } from './layers/hills.js';
 import { minerals } from './layers/minerals.js';
@@ -65,13 +66,15 @@ export class MapPainter {
         this.ctx = this.canvas.getContext('2d');
 
         this.colors = {};
-        for (const [name, hex] of Object.entries(COLORS)) this.colors[name] = hexToPacked(hex);
+        for (const [name, hex] of Object.entries(COLORS)) {
+            this.colors[name] = Array.isArray(hex) ? hex.map(hexToPacked) : hexToPacked(hex);
+        }
     }
 
     /* ---------- Главный метод ---------- */
 
     // view: 'terrain' | 'temperature' | 'regions'. Возвращает холст с готовой картой.
-    paint({ view, seasonName, showBorders, mood }) {
+    paint({ view, seasonName, showBorders, showFactions, mood }) {
         this.view = view;
         this.mood = mood === 'dark' ? 'dark' : 'light';
         this.season = (this.mood === 'dark' ? DARK_SEASONS : SEASONS)[seasonName];
@@ -107,6 +110,7 @@ export class MapPainter {
         }
         this.paintTexture();
         if (showBorders) this.paintRegionBorders();
+        if (showFactions) this.paintFactionBorders();
         if (terrain) this.paintScene();
 
         if (terrain && this.mood === 'dark' && this.options.grade) this.applyGrading();
@@ -173,4 +177,4 @@ export class MapPainter {
     }
 }
 
-Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers, texture, grading, props, roads, settlements, minerals, borders, scene, vegetation);
+Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers, texture, grading, props, roads, settlements, minerals, borders, factions, scene, vegetation);

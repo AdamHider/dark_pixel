@@ -29,6 +29,7 @@ i = y * size + x;
 | `riverTo` | Int32 | куда течёт река из клетки (-1 — не река или сток за край) |
 | `crossing` | Uint8 | 0 — нет; 1 — брод; 2 — каменный мост |
 | `regionId` | Int16 | номер региона (-1 — вода/вне региона) |
+| `factionId` | Int16 | номер фракции (-1 — вода/вне фракции) |
 | `roadLevel` | Uint8 | 0 — нет дороги; 1..3 — насколько наезжена |
 | `roadLinks` | Uint8 | биты: в какие из 8 сторон идёт дорога (`ROAD_DIRECTIONS`) |
 | `population` | Uint16 | население в клетке с поселением |
@@ -43,6 +44,9 @@ i = y * size + x;
 | `settlementGroups` | группы соседних клеток: `{ id, regionId, tiles, tile (центр), population }` |
 | `regionPopulation` | объект `id региона → население` |
 | `regionSizes` | объект `id региона → число клеток` |
+| `regionFaction` | Int16: `id региона → id фракции` (-1 — не назначен) |
+| `factions` | список фракций: `{ id, name, regions, tiles, population }` |
+| `factionTiles` / `factionPopulation` | число клеток и население по каждой фракции |
 | `landTiles` | список индексов всех клеток суши (заполняется `collectLandTiles`) |
 | `seaLevel` | уровень моря (порог высоты) |
 | `filled` / `flowTo` | результат заливки впадин (`fillDepressions`): уровень воды и сток |

@@ -144,7 +144,7 @@ export const roads = {
 
         path.forEach((tile, k) => {
             this.roadLevel[tile] = Math.min(3, this.roadLevel[tile] + 1);
-            if (this.river[tile] > 0 && this.crossing[tile] === 0) this.crossing[tile] = this.river[tile] >= 2 ? 2 : 1;
+            if (this.river[tile] > 0 && this.crossing[tile] === 0) this.crossing[tile] = this.riverCrossingType(tile);
             if (k === 0) return;
             const previous = path[k - 1];
             const forward = direction(previous, tile);

@@ -94,6 +94,7 @@ this.placeRiverCrossings();    // мосты и броды
 this.buildRegions();           // регионы
 this.distributeWheat();        // гарантированные поля по регионам
 this.placeSettlements();       // население и поселения
+this.buildFactions();          // фракции (объединения регионов)
 this.buildRoads();             // дороги между поселениями
 ```
 

@@ -28,6 +28,10 @@ export const tileColors = {
             return hslToPacked(hue, 60, isWater ? 36 : 52);
         }
         if (isWater) return this.waterColor(i);
+        if (this.view === 'factions') {
+            const f = this.map.factionId ? this.map.factionId[i] : -1;
+            if (f >= 0) return this.colors.factionColors[f % this.colors.factionColors.length];
+        }
         if (this.view === 'regions') return hslToPacked((map.regionId[i] * 137.5) % 360, 45, 58); // «золотой угол»: соседи разного цвета
         if (terrain === Terrain.MOUNTAIN) return this.packed.rock; // под рельефом — камень
         return this.groundColor(i);

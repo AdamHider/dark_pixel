@@ -258,8 +258,14 @@
     // 0 — почти круглые регионы, больше — причудливее границы
     regionBarrierCost: 3,
     // насколько горы и реки «мешают» росту региона (границы ложатся по ним)
-    regionBalancePasses: 12
+    regionBalancePasses: 12,
     // сколько раз выравнивать размеры регионов (0 — не выравнивать)
+    // --- фракции ---
+    factionCount: 2,
+    // сколько фракций на карте (1..N); 0 — фракций нет
+    factionNames: ["\u0418\u043C\u043F\u0435\u0440\u0438\u044F \u041E\u0433\u043D\u044F", "\u0421\u0435\u0432\u0435\u0440\u043D\u044B\u0439 \u0414\u043E\u0433\u043E\u0432\u043E\u0440", "\u042D\u0444\u0438\u0440\u043D\u044B\u0439 \u041A\u043E\u0432\u0435\u043D", "\u041F\u0443\u0441\u0442\u044B\u043D\u043D\u044B\u0439 \u0425\u0430\u043B\u0438\u0444\u0430\u0442"],
+    factionColorShift: 0
+    // 0..1: насколько «дрожит» граница фракций (0 — ровная линия по клеткам)
   });
 
   // src/map/steps/climate.js
@@ -379,6 +385,232 @@
           if (bump > threshold) this.elevation[i] = estimatedSea + 0.01 + (bump - threshold) * 0.5;
         }
       }
+    }
+  };
+
+  // src/map/steps/factions.js
+  var factions = {
+    buildFactions() {
+      const o = this.options;
+      const count = Math.max(0, Math.floor(o.factionCount) || 0);
+      this.factionId = new Int16Array(this.terrain.length).fill(-1);
+      this.regionFaction = new Int16Array(this.terrain.length).fill(-1);
+      this.factions = [];
+      const regionIds = Object.keys(this.regionSizes).map(Number);
+      if (count <= 0 || regionIds.length === 0) return;
+      const neighbors = this.buildRegionAdjacency();
+      const mainland = this.largestRegionComponent(regionIds, neighbors);
+      const seeds = this.pickFactionSeeds(mainland, neighbors, Math.min(count, mainland.length));
+      this.growFactions(mainland, neighbors, seeds);
+      this.factions = seeds.map((_, id) => ({ id, name: this.factionName(id), regions: [], tiles: 0, population: 0 }));
+      this.collectFactionRegions(regionIds);
+      this.assignIslandsByProximity(regionIds);
+      this.countFactionSizes();
+    },
+    // Записывает, какие регионы уже принадлежат каждой фракции (по массиву regionFaction).
+    collectFactionRegions(regionIds) {
+      for (const faction of this.factions) faction.regions.length = 0;
+      for (const id of regionIds) {
+        const f = this.regionFaction[id];
+        if (f >= 0) this.factions[f].regions.push(id);
+      }
+    },
+    // Соседство регионов: множество id регионов, у которых есть общая граница клеток.
+    buildRegionAdjacency() {
+      const neighbors = /* @__PURE__ */ new Map();
+      for (const id of Object.keys(this.regionSizes).map(Number)) neighbors.set(id, /* @__PURE__ */ new Set());
+      for (let i = 0; i < this.terrain.length; i++) {
+        const id = this.regionId[i];
+        if (id === -1) continue;
+        for (const j of this.neighbors(i)) {
+          const other = this.regionId[j];
+          if (other === -1 || other === id) continue;
+          neighbors.get(id).add(other);
+          neighbors.get(other).add(id);
+        }
+      }
+      return neighbors;
+    },
+    // Самый крупный связный кусок графа регионов (материк): фракции делят именно его, острова — потом.
+    largestRegionComponent(regionIds, neighbors) {
+      const seen = /* @__PURE__ */ new Set();
+      let best = [];
+      for (const start of regionIds) {
+        if (seen.has(start)) continue;
+        const queue = [start];
+        seen.add(start);
+        for (let head = 0; head < queue.length; head++) {
+          for (const n of neighbors.get(queue[head])) {
+            if (seen.has(n)) continue;
+            seen.add(n);
+            queue.push(n);
+          }
+        }
+        if (queue.length > best.length) best = queue;
+      }
+      return best;
+    },
+    // Регион -> клетки (кэш внутри шага).
+    regionTilesLookup(id) {
+      if (!this.factionRegionTiles) {
+        const byRegion = {};
+        for (const i of this.landTiles) (byRegion[this.regionId[i]] ||= []).push(i);
+        this.factionRegionTiles = byRegion;
+      }
+      return this.factionRegionTiles[id] || [];
+    },
+    // Семена фракций на материке: расставляем их как можно дальше друг от друга по графу регионов.
+    pickFactionSeeds(mainland, neighbors, count) {
+      const seeds = [];
+      if (count <= 0) return seeds;
+      const sizeOrder = mainland.slice().sort((a, b) => this.regionSizes[b] - this.regionSizes[a]);
+      seeds.push(sizeOrder[0]);
+      while (seeds.length < count) {
+        const distance = this.regionDistances(seeds, mainland, neighbors);
+        let best = -1;
+        for (const id of mainland) {
+          if (seeds.includes(id)) continue;
+          const spread = distance.get(id) ?? Infinity;
+          if (best === -1) {
+            best = id;
+            continue;
+          }
+          const bestSpread = distance.get(best) ?? Infinity;
+          if (spread > bestSpread || spread === bestSpread && this.regionSizes[id] > this.regionSizes[best]) best = id;
+        }
+        if (best === -1) break;
+        seeds.push(best);
+      }
+      return seeds;
+    },
+    // Многоисточниковый BFS: расстояние (в шагах по регионам) до ближайшего семени.
+    regionDistances(sources, mainland, neighbors) {
+      const distance = /* @__PURE__ */ new Map();
+      const queue = [];
+      for (const s of sources) {
+        distance.set(s, 0);
+        queue.push(s);
+      }
+      const mainlandSet = new Set(mainland);
+      for (let head = 0; head < queue.length; head++) {
+        const id = queue[head];
+        for (const n of neighbors.get(id)) {
+          if (!mainlandSet.has(n) || distance.has(n)) continue;
+          distance.set(n, distance.get(id) + 1);
+          queue.push(n);
+        }
+      }
+      return distance;
+    },
+    /* Рост фракций: каждый ход расширяется самая маленькая фракция — присоединяет соседний регион.
+       Кандидат всегда соседний с уже присвоенным регионом этой фракции, поэтому владения не рвутся. */
+    growFactions(regionIds, neighbors, seeds) {
+      const sizes = seeds.map(() => 0);
+      const byFaction = seeds.map(() => /* @__PURE__ */ new Set());
+      const assigned = /* @__PURE__ */ new Set();
+      seeds.forEach((region, id) => {
+        this.setRegionFaction(region, id);
+        byFaction[id].add(region);
+        assigned.add(region);
+        sizes[id] = this.regionSizes[region] || 0;
+      });
+      let remaining = regionIds.length - seeds.length;
+      while (remaining > 0) {
+        let leader = 0;
+        for (let k = 1; k < seeds.length; k++) if (sizes[k] < sizes[leader]) leader = k;
+        let moved = false;
+        for (let k = 0; k < seeds.length && !moved; k++) {
+          const faction = (leader + k) % seeds.length;
+          const region = this.nextFactionRegion(byFaction[faction], assigned, neighbors);
+          if (region === -1) continue;
+          this.setRegionFaction(region, faction);
+          byFaction[faction].add(region);
+          assigned.add(region);
+          sizes[faction] += this.regionSizes[region] || 0;
+          remaining--;
+          moved = true;
+        }
+        if (!moved) break;
+      }
+    },
+    // Соседний неприсвоенный регион с самой крупной площадью. Через чужие владения не проходим.
+    nextFactionRegion(factionRegions, assigned, neighbors) {
+      let best = -1;
+      for (const id of factionRegions) {
+        for (const n of neighbors.get(id)) {
+          if (assigned.has(n)) continue;
+          if (best === -1 || this.regionSizes[n] > this.regionSizes[best]) best = n;
+        }
+      }
+      return best;
+    },
+    // Острова и прочие регионы без сухопутной связи: отдаём ближайшей по центроиду фракции.
+    assignIslandsByProximity(regionIds) {
+      const pending = regionIds.filter((id) => this.regionFaction[id] < 0);
+      if (pending.length === 0 || this.factions.length === 0) return;
+      const centers = /* @__PURE__ */ new Map();
+      for (const id of regionIds) {
+        const tiles = this.regionTilesLookup(id);
+        if (tiles.length === 0) continue;
+        let sx = 0, sy = 0;
+        for (const i of tiles) {
+          sx += i % this.size;
+          sy += Math.floor(i / this.size);
+        }
+        centers.set(id, [sx / tiles.length, sy / tiles.length]);
+      }
+      const factionCenters = this.factions.map((faction) => {
+        let sx = 0, sy = 0, n = 0;
+        for (const id of faction.regions) {
+          const c = centers.get(id);
+          if (!c) continue;
+          sx += c[0];
+          sy += c[1];
+          n++;
+        }
+        return n > 0 ? [sx / n, sy / n] : null;
+      });
+      for (const id of pending) {
+        const c = centers.get(id);
+        let best = -1, bestDistance = Infinity;
+        for (let f = 0; f < factionCenters.length; f++) {
+          const fc = factionCenters[f];
+          if (!fc || !c) continue;
+          const distance = Math.hypot(fc[0] - c[0], fc[1] - c[1]);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            best = f;
+          }
+        }
+        if (best === -1) best = 0;
+        this.setRegionFaction(id, best);
+        this.factions[best].regions.push(id);
+      }
+    },
+    setRegionFaction(regionId, factionId) {
+      this.regionFaction[regionId] = factionId;
+      for (const i of this.regionTilesLookup(regionId)) this.factionId[i] = factionId;
+    },
+    countFactionSizes() {
+      this.factionTiles = this.factions.map(() => 0);
+      this.factionPopulation = this.factions.map(() => 0);
+      for (const i of this.landTiles) {
+        const f = this.factionId[i];
+        if (f < 0) continue;
+        this.factionTiles[f]++;
+        this.factionPopulation[f] += this.population[i] || 0;
+      }
+      for (const faction of this.factions) {
+        faction.tiles = this.factionTiles[faction.id];
+        faction.population = this.factionPopulation[faction.id];
+      }
+    },
+    factionName(id) {
+      const names = this.options.factionNames;
+      return names && names[id % names.length] || `\u0424\u0440\u0430\u043A\u0446\u0438\u044F ${id + 1}`;
+    },
+    getFactionInfo(factionId) {
+      return this.factions[factionId] || null;
     }
   };
 
@@ -879,8 +1111,12 @@
         this.resource[i] = Resource.NONE;
       }
     },
-    // Переправы: на прямых участках рек (вода входит и выходит в одном направлении) изредка ставим брод.
-    // У всех рек глубина 1, поэтому мосты не нужны — только каменные ступени-броды.
+    // Переправа через реку в клетке i: широкие реки (расход не меньше второго порога) — мост, узкие — брод.
+    // Глубина у всех рек 1, поэтому «мост или брод» решается по ширине русла (расходу воды), а не по глубине.
+    riverCrossingType(i) {
+      return this.riverFlow[i] >= this.options.riverThresholds[1] ? 2 : 1;
+    },
+    // Переправы: на прямых участках рек (вода входит и выходит в одном направлении) изредка ставим брод или мост.
     placeRiverCrossings() {
       const size = this.size;
       const upstream = /* @__PURE__ */ new Map();
@@ -899,7 +1135,7 @@
         if (ax !== bx || ay !== by) continue;
         if (this.random() > this.options.riverCrossingChance) continue;
         if (this.neighbors8(i).some((j) => this.crossing[j])) continue;
-        this.crossing[i] = 1;
+        this.crossing[i] = this.riverCrossingType(i);
       }
     }
   };
@@ -1031,7 +1267,7 @@
       };
       path.forEach((tile, k) => {
         this.roadLevel[tile] = Math.min(3, this.roadLevel[tile] + 1);
-        if (this.river[tile] > 0 && this.crossing[tile] === 0) this.crossing[tile] = this.river[tile] >= 2 ? 2 : 1;
+        if (this.river[tile] > 0 && this.crossing[tile] === 0) this.crossing[tile] = this.riverCrossingType(tile);
         if (k === 0) return;
         const previous = path[k - 1];
         const forward = direction(previous, tile);
@@ -1343,6 +1579,7 @@
       this.buildRegions();
       this.distributeWheat();
       this.placeSettlements();
+      this.buildFactions();
       this.buildRoads();
       return this;
     }
@@ -1400,6 +1637,8 @@
       this.river = new Uint8Array(count);
       this.regionId = new Int16Array(count).fill(-1);
       this.regionSizes = {};
+      this.factionId = new Int16Array(count).fill(-1);
+      this.factions = [];
       this.landTiles = [];
     }
     /* ---------- Вспомогательные методы для работы с клетками ---------- */
@@ -1449,9 +1688,16 @@
         coastal: false,
         resources: [0, 0, 0, 0, 0, 0, 0],
         // по кодам Resource (0 — клетки без ресурса)
-        biomes: new Array(BIOME_COUNT).fill(0)
+        biomes: new Array(BIOME_COUNT).fill(0),
         // по кодам Biome (без гор)
+        factionId: -1,
+        factionName: null
       };
+      const factionId = this.factionId ? this.factionId[tiles[0]] : -1;
+      if (factionId >= 0) {
+        info2.factionId = factionId;
+        info2.factionName = this.factionName(factionId);
+      }
       info2.settlements = this.settlements.filter((s) => s.regionId === regionId);
       for (const i of tiles) {
         if (this.terrain[i] === Terrain.MOUNTAIN) info2.mountains++;
@@ -1484,7 +1730,9 @@
         crossing: this.crossing[i],
         waterDepth: this.waterDepth[i],
         regionId,
-        regionSize: regionId >= 0 ? this.regionSizes[regionId] : 0
+        regionSize: regionId >= 0 ? this.regionSizes[regionId] : 0,
+        factionId: this.factionId[i],
+        factionName: this.factionId[i] >= 0 ? this.factionName(this.factionId[i]) : null
       };
     }
     get landShare() {
@@ -1494,7 +1742,7 @@
       return Object.keys(this.regionSizes).length;
     }
   };
-  Object.assign(MapGenerator.prototype, elevation, terrain, climate, resources, rivers, regions, settlements, roads);
+  Object.assign(MapGenerator.prototype, elevation, terrain, climate, resources, rivers, regions, factions, settlements, roads);
 
   // src/render/color.js
   var packRgb = (r, g, b) => 4278190080 | b << 16 | g << 8 | r;
@@ -2040,6 +2288,10 @@
     riftGlow: "#a45cff",
     riftCore: "#e9ccff",
     regionBorder: "#19110a",
+    factionBorder: "#0c0906",
+    // тёмная обводка границы фракции
+    factionColors: ["#c0503a", "#3d6ea8", "#4f8f52", "#b08a2e", "#7a4f9c", "#2f8f8f"],
+    // цвет каждой фракции по кругу
     sand: "#dccb96",
     wetSand: "#b5a67c",
     pebbleLight: "#a9a59a",
@@ -2094,7 +2346,7 @@
       const { colors, water } = this.buildTileColors();
       this.tileColors = colors;
       this.tileWater = water;
-      const smooth = this.view !== "regions";
+      const smooth = this.view !== "regions" && this.view !== "factions";
       const quadOf = this.blendGrid().quadOf;
       const quadColors = new Int32Array(16);
       const quadWater = new Uint8Array(16);
@@ -2313,6 +2565,60 @@
             if (relief2) alpha *= 0.4 + 0.6 * (1 - Math.min(1, relief2[k] / 110));
             if (BAYER[(gy & 3) * 4 + (gx & 3)] >= alpha * 2) continue;
             pixels[k] = mixPacked(pixels[k], ink, alpha);
+          }
+        }
+      }
+    }
+  };
+
+  // src/render/painter/layers/factions.js
+  var factions2 = {
+    factionNoise(gx, gy) {
+      const cell = Math.max(8, this.px(20));
+      const fx = gx / cell, fy = gy / cell;
+      const ix = Math.floor(fx), iy = Math.floor(fy);
+      const u = (fx - ix) * (fx - ix) * (3 - 2 * (fx - ix));
+      const v = (fy - iy) * (fy - iy) * (3 - 2 * (fy - iy));
+      const a = hashUnit(ix, iy, 1701), b = hashUnit(ix + 1, iy, 1701);
+      const c = hashUnit(ix, iy + 1, 1701), d = hashUnit(ix + 1, iy + 1, 1701);
+      const top = a + (b - a) * u;
+      return top + (c + (d - c) * u - top) * v;
+    },
+    paintFactionBorders() {
+      const { size, factionId } = this.map;
+      if (!factionId) return;
+      const T = this.tileSize;
+      const W = this.width;
+      const pixels = this.pixels;
+      const palette = this.colors.factionColors;
+      const ink = this.colors.factionBorder;
+      const radius = Math.max(2, this.px(5));
+      for (let tile = 0; tile < size * size; tile++) {
+        const id = factionId[tile];
+        if (id < 0) continue;
+        const tx = tile % size, ty = Math.floor(tile / size);
+        const right = tx < size - 1 ? factionId[tile + 1] : id;
+        const below = ty < size - 1 ? factionId[tile + size] : id;
+        const edgeRight = tx < size - 1 && right >= 0 && right !== id;
+        const edgeBelow = ty < size - 1 && below >= 0 && below !== id;
+        if (!edgeRight && !edgeBelow) continue;
+        const x0 = tx * T, y0 = ty * T;
+        for (let oy = 0; oy < T; oy++) {
+          const gy = y0 + oy;
+          for (let ox = 0; ox < T; ox++) {
+            const gx = x0 + ox;
+            const k = gy * W + gx;
+            if (this.riverMask && this.riverMask[k]) continue;
+            const toRight = edgeRight ? T - ox : Infinity;
+            const toBottom = edgeBelow ? T - oy : Infinity;
+            const dist = Math.min(toRight, toBottom);
+            if (dist > radius) continue;
+            const d = dist - this.factionNoise(gx, gy) * radius * 0.9;
+            if (d >= radius || d <= 0) continue;
+            const alpha = d / radius * 0.9;
+            if (BAYER[(gy & 3) * 4 + (gx & 3)] >= alpha * 2) continue;
+            pixels[k] = mixPacked(pixels[k], ink, alpha * 0.5);
+            pixels[k] = mixPacked(pixels[k], palette[id % palette.length], alpha);
           }
         }
       }
@@ -4025,6 +4331,10 @@
         return hslToPacked(hue, 60, isWater ? 36 : 52);
       }
       if (isWater) return this.waterColor(i);
+      if (this.view === "factions") {
+        const f = this.map.factionId ? this.map.factionId[i] : -1;
+        if (f >= 0) return this.colors.factionColors[f % this.colors.factionColors.length];
+      }
       if (this.view === "regions") return hslToPacked(map.regionId[i] * 137.5 % 360, 45, 58);
       if (terrain2 === Terrain.MOUNTAIN) return this.packed.rock;
       return this.groundColor(i);
@@ -4268,11 +4578,13 @@
       this.canvas = document.createElement("canvas");
       this.ctx = this.canvas.getContext("2d");
       this.colors = {};
-      for (const [name, hex] of Object.entries(COLORS)) this.colors[name] = hexToPacked(hex);
+      for (const [name, hex] of Object.entries(COLORS)) {
+        this.colors[name] = Array.isArray(hex) ? hex.map(hexToPacked) : hexToPacked(hex);
+      }
     }
     /* ---------- Главный метод ---------- */
     // view: 'terrain' | 'temperature' | 'regions'. Возвращает холст с готовой картой.
-    paint({ view, seasonName, showBorders, mood }) {
+    paint({ view, seasonName, showBorders, showFactions, mood }) {
       this.view = view;
       this.mood = mood === "dark" ? "dark" : "light";
       this.season = (this.mood === "dark" ? DARK_SEASONS : SEASONS)[seasonName];
@@ -4306,6 +4618,7 @@
       }
       this.paintTexture();
       if (showBorders) this.paintRegionBorders();
+      if (showFactions) this.paintFactionBorders();
       if (terrain2) this.paintScene();
       if (terrain2 && this.mood === "dark" && this.options.grade) this.applyGrading();
       for (const draw of this.emissive) draw();
@@ -4366,7 +4679,7 @@
       return points;
     }
   };
-  Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers2, texture, grading, props, roads2, settlements2, minerals, borders, scene, vegetation);
+  Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers2, texture, grading, props, roads2, settlements2, minerals, borders, factions2, scene, vegetation);
 
   // src/render/renderer/camera.js
   var camera = {
@@ -4664,6 +4977,7 @@
       this.seasonName = "summer";
       this.mood = this.options.mood;
       this.showBorders = true;
+      this.showFactions = true;
       this.camera = { x: 0, y: 0, zoom: 1 };
       this.sprites = new SpriteRenderer();
       this.objects = [];
@@ -4712,8 +5026,19 @@
       this.rebuildBuffer();
       this.draw();
     }
+    setShowFactions(show) {
+      this.showFactions = show;
+      this.rebuildBuffer();
+      this.draw();
+    }
     rebuildBuffer() {
-      this.buffer = this.painter.paint({ view: this.view, seasonName: this.seasonName, showBorders: this.showBorders, mood: this.mood });
+      this.buffer = this.painter.paint({
+        view: this.view,
+        seasonName: this.seasonName,
+        showBorders: this.showBorders,
+        showFactions: this.showFactions,
+        mood: this.mood
+      });
     }
     /* ---------- Камера ---------- */
     get worldSize() {
@@ -5112,12 +5437,14 @@
     if (tile.resource === Resource.SETTLEMENT) parts.push(`\u043D\u0430\u0441\u0435\u043B\u0435\u043D\u0438\u0435 ${tile.population} (\u0443\u0440\u043E\u0432\u0435\u043D\u044C ${tile.settlementLevel}, \u0433\u0440\u0443\u043F\u043F\u0430 \u0438\u0437 ${tile.settlementGroupSize} \u043A\u043B.)`);
     if (tile.roadLevel > 0) parts.push("\u0434\u043E\u0440\u043E\u0433\u0430");
     if (tile.regionId >= 0) parts.push(`\u0440\u0435\u0433\u0438\u043E\u043D #${tile.regionId}, ${tile.regionSize} \u043A\u0432.`);
+    if (tile.factionName) parts.push(`\u0444\u0440\u0430\u043A\u0446\u0438\u044F: ${tile.factionName}`);
     return parts.join(" \xB7 ");
   }
   function describeRegion(region) {
     const resources2 = region.resources.map((count, code) => count > 0 && code !== Resource.NONE ? `${RESOURCE_NAMES[code]}: ${count}` : null).filter(Boolean);
     const dominantBiome = BIOME_NAMES[region.biomes.indexOf(Math.max(...region.biomes))];
     const parts = [`\u0420\u0435\u0433\u0438\u043E\u043D #${region.id}: ${region.size} \u043A\u0432.`, `\u043D\u0430\u0441\u0435\u043B\u0435\u043D\u0438\u0435 \u0440\u0435\u0433\u0438\u043E\u043D\u0430 ${region.population}`, `\u043F\u0440\u0435\u043E\u0431\u043B\u0430\u0434\u0430\u0435\u0442 ${dominantBiome}`];
+    if (region.factionName) parts.push(`\u0444\u0440\u0430\u043A\u0446\u0438\u044F: ${region.factionName}`);
     if (region.mountains > 0) parts.push(`\u0433\u043E\u0440: ${region.mountains}`);
     if (region.riverTiles > 0) parts.push(`\u0440\u0435\u043A: ${region.riverTiles}`);
     if (region.coastal) parts.push("\u0432\u044B\u0445\u043E\u0434 \u043A \u0432\u043E\u0434\u0435");
@@ -5185,6 +5512,7 @@ ${describeRegion(region)}` : `\u041A\u043B\u0435\u0442\u043A\u0430 ${describeTil
   });
   seedInput.addEventListener("change", buildMap);
   document.getElementById("borders").addEventListener("change", (e) => renderer.setShowBorders(e.target.checked));
+  document.getElementById("factions").addEventListener("change", (e) => renderer.setShowFactions(e.target.checked));
   document.getElementById("fit").addEventListener("click", () => renderer.fitToView());
   bindChoiceGroup("season", (season) => renderer.setSeason(season));
   bindChoiceGroup("view", (view) => renderer.setView(view));

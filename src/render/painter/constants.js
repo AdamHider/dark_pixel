@@ -12,6 +12,8 @@ export const COLORS = {
     riftGlow: '#a45cff',
     riftCore: '#e9ccff',
     regionBorder: '#19110a',
+    factionBorder: '#0c0906',                 // тёмная обводка границы фракции
+    factionColors: ['#c0503a', '#3d6ea8', '#4f8f52', '#b08a2e', '#7a4f9c', '#2f8f8f'], // цвет каждой фракции по кругу
     sand: '#dccb96',
     wetSand: '#b5a67c',
     pebbleLight: '#a9a59a',

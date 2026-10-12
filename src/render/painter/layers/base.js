@@ -18,7 +18,7 @@ export const base = {
         const { colors, water } = this.buildTileColors();
         this.tileColors = colors;      // нужны слою сглаживания берега
         this.tileWater = water;
-        const smooth = this.view !== 'regions'; // в режиме регионов границы должны быть точными
+        const smooth = this.view !== 'regions' && this.view !== 'factions'; // в режимах регионов и фракций границы должны быть точными
         const quadOf = this.blendGrid().quadOf;
 
         const quadColors = new Int32Array(16);

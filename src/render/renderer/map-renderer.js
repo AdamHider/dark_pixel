@@ -32,10 +32,11 @@ export class MapRenderer {
         this.painter = new MapPainter(map, this.options);
         this.buffer = document.createElement('canvas'); // пока пустой; после refresh() — холст painter'а
 
-        this.view = 'terrain';     // 'terrain' | 'temperature' | 'regions'
+        this.view = 'terrain';     // 'terrain' | 'temperature' | 'regions' | 'factions'
         this.seasonName = 'summer';
         this.mood = this.options.mood;
         this.showBorders = true;
+        this.showFactions = true;
         this.camera = { x: 0, y: 0, zoom: 1 };
         this.sprites = new SpriteRenderer();
         this.objects = [];         // объекты на карте: города, армии... (см. setObjects)
@@ -94,8 +95,17 @@ export class MapRenderer {
         this.draw();
     }
 
+    setShowFactions(show) {
+        this.showFactions = show;
+        this.rebuildBuffer();
+        this.draw();
+    }
+
     rebuildBuffer() {
-        this.buffer = this.painter.paint({ view: this.view, seasonName: this.seasonName, showBorders: this.showBorders, mood: this.mood });
+        this.buffer = this.painter.paint({
+            view: this.view, seasonName: this.seasonName,
+            showBorders: this.showBorders, showFactions: this.showFactions, mood: this.mood
+        });
     }
 
     /* ---------- Камера ---------- */

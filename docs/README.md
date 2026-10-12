@@ -35,6 +35,7 @@
 | Лес, поля, руда, эфир | `src/map/steps/resources.js` |
 | Озёра, реки, мосты и броды (данные) | `src/map/steps/rivers.js` |
 | Регионы (политические области) | `src/map/steps/regions.js` |
+| Фракции (объединения регионов) | `src/map/steps/factions.js` |
 | Поселения и население | `src/map/steps/settlements.js` |
 | Дороги | `src/map/steps/roads.js` |
 | Цвета клеток, вода, снег, берега (рисование) | `src/render/painter/layers/tile-colors.js` |
@@ -42,6 +43,7 @@
 | Пляжи, галька, утёсы (рисование) | `src/render/painter/layers/shores.js` |
 | Горы, тени рельефа | `src/render/painter/layers/relief.js`, `hill-shading.js` |
 | Реки, кромка, мосты (рисование) | `src/render/painter/layers/rivers.js` |
+| Границы регионов и фракций (рисование) | `src/render/painter/layers/borders.js`, `layers/factions.js` |
 | Деревья, кусты, пшеница | `src/render/painter/layers/vegetation.js` |
 | Домики и поселения (рисование) | `src/render/painter/layers/settlements.js` |
 | Все числа генерации | `src/map/defaults.js` |

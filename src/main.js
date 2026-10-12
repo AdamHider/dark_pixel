@@ -72,6 +72,7 @@ document.getElementById('generate').addEventListener('click', () => {
 });
 seedInput.addEventListener('change', buildMap);
 document.getElementById('borders').addEventListener('change', e => renderer.setShowBorders(e.target.checked));
+document.getElementById('factions').addEventListener('change', e => renderer.setShowFactions(e.target.checked));
 document.getElementById('fit').addEventListener('click', () => renderer.fitToView());
 
 bindChoiceGroup('season', season => renderer.setSeason(season));
