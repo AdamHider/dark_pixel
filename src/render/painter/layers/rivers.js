@@ -217,85 +217,94 @@ export const rivers = {
         }
     },
 
-    // Переправа: каменный мост (река глубже 1) или брод из камней (ручей). Рисуется поперёк течения.
-    // Русло ищем в окрестности клетки (а не только в ней самой): у широких рек берега лежат в соседних клетках,
-    // поэтому мост должен идти от настоящего берега до настоящего берега, а не висеть посреди воды.
+    /* Переправа: каменный мост (река глубже 1) или брод из камней (ручей).
+       Мост всегда перпендикулярен реке, в том числе на диагональных участках и на изгибах:
+       1) берём локальное направление течения (из riverTo и, если есть, верхней по течению клетки);
+       2) перпендикуляр к нему — это ось моста;
+       3) от центра клетки шагаем вдоль оси в обе стороны до настоящего берега (по маске воды);
+       4) рисуем настил толстой линией между берегами (Брезенхэм), края — тонкими линиями, брод — камнями. */
     paintCrossing(x, y, i) {
         const map = this.map;
+        const size = map.size;
         const T = this.tileSize;
         const W = this.width;
         const c = this.colors;
         const mask = this.riverMask;
+        const cx = x * T + T / 2, cy = y * T + T / 2;
+
+        // 1) Направление течения в клетке. Учитываем верхнюю по течению клетку (её riverTo указывает на нас),
+        //    чтобы на изгибах ось моста была перпендикулярна самому руслу, а не только вектору «вниз».
+        let fx = 0, fy = 0;
         const to = map.riverTo[i];
-        const flowX = to === -1 ? 0 : (to % map.size) - x;
-        const flowY = to === -1 ? 0 : Math.floor(to / map.size) - y;
+        if (to !== -1) { fx += (to % size) - x; fy += Math.floor(to / size) - y; }
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (!dx && !dy) continue;
+                const nx = x + dx, ny = y + dy;
+                if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+                const j = ny * size + nx;
+                if (map.river[j] > 0 && map.riverTo[j] === i) { fx -= dx; fy -= dy; }   // вода пришла из соседа
+            }
+        }
 
-        const left = x * T, top = y * T;
-        const middle = Math.floor(T / 2);
+        // 2) Ось моста — перпендикуляр к течению.
+        const flen = Math.hypot(fx, fy);
+        let ux = 0, uy = 1;
+        if (flen > 0) { ux = -fy / flen; uy = fx / flen; }
 
-        // Границы русла: идём поперёк течения от центра клетки в обе стороны, пока не кончится вода реки.
-        const bank = Math.max(1, this.px(2));
-        const maxReach = Math.max(T * 2, this.px(48));      // даже очень широкие устья/озёра: идём до настоящего берега
-        const riverRun = horizontal => {
-            const alongCenter = (horizontal ? left : top) + middle;
-            const acrossCenter = (horizontal ? top : left) + middle;
-            const at = b => {
-                const ax = horizontal ? alongCenter : b;
-                const ay = horizontal ? b : alongCenter;
-                if (ax < 0 || ay < 0 || ax >= W || ay >= W) return false;
-                return !!(mask && mask[ay * W + ax]);
-            };
-            if (!at(acrossCenter)) return null;
-            let lo = acrossCenter, hi = acrossCenter;
-            while (lo > acrossCenter - maxReach && at(lo - 1)) lo--;
-            while (hi < acrossCenter + maxReach && at(hi + 1)) hi++;
-            return { lo, hi };
+        const water = (px, py) => px >= 0 && py >= 0 && px < W && py < W && !!(mask && mask[py * W + px] > 0);
+        const bank = Math.max(1, this.px(2));                 // насколько мост заходит на берег
+        const maxReach = Math.max(T * 2, this.px(48));        // широкие устья/озёра: идём до настоящего берега
+
+        // 3) Шагаем от центра клетки вдоль оси моста; возвращаем расстояние до дальнего берега.
+        const march = sign => {
+            let waterIn = -1;
+            for (let t = 1; t <= maxReach; t++) {
+                const px = Math.round(cx + sign * ux * t), py = Math.round(cy + sign * uy * t);
+                if (px < 0 || py < 0 || px >= W || py >= W) break;
+                if (water(px, py)) { if (waterIn < 0) waterIn = t; }
+                else if (waterIn >= 0) return t;              // начали в воде и вышли на берег
+            }
+            return waterIn >= 0 ? maxReach : -1;
         };
 
-        let horizontalFlow = to === -1
-            ? x > 0 && x < map.size - 1 && map.river[i - 1] > 0 && map.river[i + 1] > 0
-            : Math.abs(flowX) >= Math.abs(flowY);
-        let run = mask ? riverRun(horizontalFlow) : null;
-        // Выбираем ориентацию, при которой поперёк течения река самая узкая: у широких устьев верный выбор
-        // не даёт мосту «висеть» вдоль воды. Если маски нет — доверяем направлению течения.
-        if (mask) {
-            const alt = riverRun(!horizontalFlow);
-            const curSpan = run ? run.hi - run.lo : Infinity;
-            const altSpan = alt ? alt.hi - alt.lo : Infinity;
-            if (altSpan < curSpan) { horizontalFlow = !horizontalFlow; run = alt; }
+        let ax, ay, bx, by;
+        const ra = mask ? march(-1) : -1;
+        const rb = mask ? march(1) : -1;
+        if (ra >= 0 && rb >= 0) {
+            ax = cx - ux * (ra + bank); ay = cy - uy * (ra + bank);
+            bx = cx + ux * (rb + bank); by = cy + uy * (rb + bank);
+        } else {                                              // маски нет — берём ширину реки
+            const half = Math.round(this.riverWidthAt(i) / 2) + bank;
+            ax = cx - ux * half; ay = cy - uy * half;
+            bx = cx + ux * half; by = cy + uy * half;
         }
 
-        let acrossFrom, acrossTo;
-        if (run) {
-            acrossFrom = run.lo - bank;
-            acrossTo = run.hi + bank;
-        } else {
-            const acrossCenter = (horizontalFlow ? top : left) + middle;
-            acrossFrom = acrossCenter - Math.round(this.riverWidthAt(i) / 2) - bank;
-            acrossTo = acrossCenter + Math.round(this.riverWidthAt(i) / 2) + bank;
-        }
-        acrossFrom = Math.max(0, acrossFrom);
-        acrossTo = Math.min(W - 1, acrossTo);
-        const span = acrossTo - acrossFrom + 1;
-        const alongCenter = (horizontalFlow ? left : top) + middle;
-
-        // Работаем в координатах «вдоль течения» (a) и «поперёк течения» (b), затем переводим в x, y.
-        const put = (a, b, w, h, color) => (horizontalFlow
-            ? this.rect(a, b, w, h, color)
-            : this.rect(b, a, h, w, color));
+        // Толстая линия между двумя точками: несколько параллельных линий со сдвигом вдоль течения.
+        const band = (x0, y0, x1, y1, thickness, color) => {
+            const len = Math.hypot(x1 - x0, y1 - y0) || 1;
+            const nx = -(y1 - y0) / len, ny = (x1 - x0) / len;
+            const half = (thickness - 1) / 2;
+            for (let k = 0; k < thickness; k++) {
+                const o = k - half;
+                const ox = Math.round(nx * o), oy = Math.round(ny * o);
+                for (const [px, py] of this.linePoints(Math.round(x0 + ox), Math.round(y0 + oy), Math.round(x1 + ox), Math.round(y1 + oy))) {
+                    this.put(px, py, color);
+                }
+            }
+        };
 
         if (map.crossing[i] === 2) {
             const thickness = this.px(5);
-            const a0 = alongCenter - (thickness >> 1);
-            put(a0, acrossFrom, thickness, span, c.bridgeDeck);
-            put(a0, acrossFrom, 1, span, c.bridgeEdge);
-            put(a0 + thickness - 1, acrossFrom, 1, span, c.bridgeEdge);
+            band(ax, ay, bx, by, thickness, c.bridgeDeck);
+            band(ax, ay, bx, by, 1, c.bridgeEdge);            // светлая кромка настила
         } else {
-            const stones = Math.max(2, Math.min(6, Math.round(span / this.px(3))));
+            const stones = Math.max(2, Math.min(6, Math.round(Math.hypot(bx - ax, by - ay) / this.px(3))));
             for (let k = 0; k < stones; k++) {
-                const b = acrossFrom + Math.round(k * (span - 2) / (stones - 1));
-                put(alongCenter - 1, b, 2, 2, c.stone);
-                put(alongCenter, b + 1, 1, 1, c.stoneShadow);
+                const t = stones === 1 ? 0.5 : k / (stones - 1);
+                const px = Math.round(ax + (bx - ax) * t), py = Math.round(ay + (by - ay) * t);
+                this.put(px, py, c.stone);
+                this.put(px + Math.round(ux), py + Math.round(uy), c.stoneShadow);
             }
         }
     },
