@@ -26,9 +26,9 @@
      wheatStage — 'sprout' (ростки) | 'growing' (растёт) | 'ripe' (спелая) | 'bare' (стерня)
      groundDetail — цвета мелких деталей на лугах (цветы весной, листва осенью)
    ============================================================ */
-const SEASON_ORDER = ['spring', 'summer', 'autumn', 'winter'];
+export const SEASON_ORDER = ['spring', 'summer', 'autumn', 'winter'];
 
-const SEASONS = {
+export const SEASONS = {
     spring: {
         name: 'Весна',
         tempShift: 0.02,
@@ -153,7 +153,7 @@ const DARK_EXTRA = {
     winter: { deadTreeChance: 0, fogStrength: 0.8 }
 };
 
-const DARK_SEASONS = {};
+export const DARK_SEASONS = {};
 for (const [name, season] of Object.entries(SEASONS)) {
     const p = season.palette;
     const tone = (list, preset) => list.map(color => toneHex(color, preset));

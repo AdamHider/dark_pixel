@@ -1,0 +1,255 @@
+:root { 
+    --bg-dark: #0d0f12;
+    --eu-paper: #1c1813;
+    --eu-panel: #27211a;
+    --eu-panel-border: #4a3b2c;
+    --eu-gold: #d4a359;
+    --eu-gold-bright: #fcd581;
+    --eu-gold-dark: #8c6833;
+    --eu-text: #e2d7c5;
+    --eu-muted: #9e8d7c;
+    --eu-red: #8a2b2b;
+    --eu-btn: #382c21;
+    --eu-btn-hover: #4e3f30;
+    
+    --pixel-font: 'Press Start 2P', monospace;
+}
+
+* {
+    box-sizing: border-box;
+    user-select: none;
+}
+
+html, body { 
+    margin: 0; 
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden; 
+    background: var(--bg-dark); 
+    color: var(--eu-text); 
+    font-family: var(--pixel-font);
+    font-size: 10px;
+    line-height: 1.4;
+}
+
+/* 1. КАРТА НА ВЕСЬ ЭКРАН */
+#map { 
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw; 
+    height: 100vh; 
+    display: block;
+    cursor: grab; 
+    touch-action: none; 
+    background: #080a0d; 
+    z-index: 1;
+}
+#map.dragging { cursor: grabbing; }
+
+/* 2. ВЕРХНЯЯ ПАНЕЛЬ СТАТУСА (EU4 TOPBAR) */
+.eu-topbar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 48px;
+    background: linear-gradient(180deg, rgba(39, 33, 26, 0.98) 0%, rgba(20, 16, 12, 0.95) 100%);
+    border-bottom: 3px solid var(--eu-gold-dark);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.8);
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+}
+
+.eu-logo {
+    color: var(--eu-gold-bright);
+    font-size: 11px;
+    text-shadow: 2px 2px 0px #000;
+    letter-spacing: 1px;
+}
+
+.eu-resources {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+}
+
+.res-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(0, 0, 0, 0.4);
+    padding: 4px 8px;
+    border: 1px solid var(--eu-panel-border);
+    border-radius: 2px;
+    font-size: 9px;
+}
+
+.res-item span {
+    color: var(--eu-gold-bright);
+}
+
+/* 3. ИНСТРУМЕНТАЛЬНАЯ ПАНЕЛЬ И КНОПКИ УПРАВЛЕНИЯ */
+.eu-quick-nav {
+    display: flex;
+    gap: 8px;
+}
+
+/* СТИЛИЗАЦИЯ КНОПОК EU4 */
+button { 
+    font-family: var(--pixel-font);
+    font-size: 9px;
+    color: var(--eu-text); 
+    background: linear-gradient(180deg, #433527 0%, #292017 100%); 
+    border: 2px solid var(--eu-gold-dark); 
+    border-radius: 2px; 
+    padding: 6px 10px; 
+    cursor: pointer; 
+    box-shadow: inset 1px 1px 0 rgba(255,255,255,0.1), 2px 2px 4px rgba(0,0,0,0.6);
+    transition: all 0.1s ease;
+    text-transform: uppercase;
+}
+
+button:hover { 
+    background: linear-gradient(180deg, #574635 0%, #3a2e22 100%); 
+    border-color: var(--eu-gold);
+    color: #fff;
+}
+
+button:active {
+    box-shadow: inset 2px 2px 4px rgba(0,0,0,0.8);
+    transform: translateY(1px);
+}
+
+button[aria-pressed="true"], button.primary { 
+    background: linear-gradient(180deg, #b88339 0%, #784e1b 100%); 
+    border-color: var(--eu-gold-bright);
+    color: #fff;
+    text-shadow: 1px 1px 0 #000;
+}
+
+/* 4. ОВЕРЛЕИ И ВСПЛЫВАЮЩИЕ ПАНЕЛИ (EU4 MODALS) */
+.eu-panel {
+    position: absolute;
+    background: var(--eu-panel);
+    border: 3px solid var(--eu-gold-dark);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.9), inset 0 0 15px rgba(0,0,0,0.5);
+    border-radius: 4px;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    max-width: 360px;
+    width: 100%;
+}
+
+.eu-panel-header {
+    background: linear-gradient(180deg, #3d3023 0%, #201811 100%);
+    border-bottom: 2px solid var(--eu-gold-dark);
+    padding: 8px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.eu-panel-title {
+    color: var(--eu-gold-bright);
+    font-size: 10px;
+    text-shadow: 1px 1px 0 #000;
+    margin: 0;
+}
+
+.eu-panel-body {
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.eu-panel-close {
+    padding: 2px 6px;
+    font-size: 8px;
+    background: var(--eu-red);
+    border-color: #ff6b6b;
+}
+
+/* Панель генерации и меню (слева вверху) */
+#menu-panel {
+    top: 60px;
+    left: 16px;
+}
+
+/* Панель инспектора / выбора региона (справа внизу) */
+#inspector-panel {
+    bottom: 16px;
+    right: 16px;
+    width: 340px;
+}
+
+/* Поля ввода и переключатели */
+input[type=number] { 
+    font-family: var(--pixel-font);
+    font-size: 9px;
+    color: var(--eu-gold-bright); 
+    background: #100d0a; 
+    border: 1px solid var(--eu-panel-border); 
+    padding: 6px; 
+    width: 80px;
+    text-align: center;
+}
+
+label { 
+    color: var(--eu-text); 
+    display: flex; 
+    gap: 8px; 
+    align-items: center; 
+    font-size: 8px;
+    cursor: pointer;
+}
+
+input[type=checkbox] {
+    accent-color: var(--eu-gold);
+    width: 14px;
+    height: 14px;
+}
+
+.grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+.selection { 
+    white-space: pre-line; 
+    background: #100d0a; 
+    border: 1px solid var(--eu-panel-border);
+    border-radius: 2px; 
+    padding: 8px; 
+    font-size: 8px;
+    color: var(--eu-text);
+    line-height: 1.6;
+}
+
+.hint-bar {
+    position: absolute;
+    bottom: 8px;
+    left: 16px;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid var(--eu-panel-border);
+    padding: 6px 10px;
+    font-size: 7px;
+    color: var(--eu-muted);
+    z-index: 5;
+    border-radius: 2px;
+    pointer-events: none;
+}
+
+/* Кастомная полоса прокрутки для панелей */
+.eu-panel-body::-webkit-scrollbar { width: 6px; }
+.eu-panel-body::-webkit-scrollbar-track { background: #120e0b; }
+.eu-panel-body::-webkit-scrollbar-thumb { background: var(--eu-gold-dark); }
