@@ -2,57 +2,353 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Генератор карты</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Гранд-Стратегия: Карта Мира</title>
+
+<!-- Подключение ретро/пиксельного шрифта Press Start 2P -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+
 <style>
-    :root { --bg: #f1eee6; --fg: #232a2e; --muted: #66706f; --panel: #e2ddd0; --accent: #a8641c; --accent-fg: #fff; }
-    @media (prefers-color-scheme: dark) {
-        :root { --bg: #141b21; --fg: #dde4dc; --muted: #8b9997; --panel: #202b33; --accent: #e0b354; --accent-fg: #1a1408; }
+    :root { 
+        --bg-dark: #0d0f12;
+        --eu-paper: #1c1813;
+        --eu-panel: #27211a;
+        --eu-panel-border: #4a3b2c;
+        --eu-gold: #d4a359;
+        --eu-gold-bright: #fcd581;
+        --eu-gold-dark: #8c6833;
+        --eu-text: #e2d7c5;
+        --eu-muted: #9e8d7c;
+        --eu-red: #8a2b2b;
+        --eu-btn: #382c21;
+        --eu-btn-hover: #4e3f30;
+        
+        --pixel-font: 'Press Start 2P', monospace;
     }
-    body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 "Trebuchet MS", Verdana, sans-serif; }
-    main { max-width: 1100px; margin: 0 auto; padding: 16px; }
-    h1 { font: 700 22px/1.2 Georgia, "Times New Roman", serif; margin: 0 0 12px; }
-    .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-    button, input[type=number] { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid transparent; border-radius: 4px; padding: 6px 12px; }
-    button { cursor: pointer; }
-    button[aria-pressed=true], button.primary { background: var(--accent); color: var(--accent-fg); }
-    input[type=number] { width: 110px; }
-    label { color: var(--muted); display: flex; gap: 6px; align-items: center; }
-    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-    #map { display: block; width: 100%; height: 70vh; cursor: grab; touch-action: none; background: #0f1418; }
+
+    * {
+        box-sizing: border-box;
+        user-select: none;
+    }
+
+    html, body { 
+        margin: 0; 
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden; 
+        background: var(--bg-dark); 
+        color: var(--eu-text); 
+        font-family: var(--pixel-font);
+        font-size: 10px;
+        line-height: 1.4;
+    }
+
+    /* 1. КАРТА НА ВЕСЬ ЭКРАН */
+    #map { 
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100vw; 
+        height: 100vh; 
+        display: block;
+        cursor: grab; 
+        touch-action: none; 
+        background: #080a0d; 
+        z-index: 1;
+    }
     #map.dragging { cursor: grabbing; }
-    #info, .hint { margin: 8px 0 0; color: var(--muted); }
-    #info { min-height: 3em; }
-    .selection { white-space: pre-line; background: var(--panel); border-radius: 4px; padding: 8px 12px; margin-top: 8px; }
+
+    /* 2. ВЕРХНЯЯ ПАНЕЛЬ СТАТУСА (EU4 TOPBAR) */
+    .eu-topbar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 48px;
+        background: linear-gradient(180deg, rgba(39, 33, 26, 0.98) 0%, rgba(20, 16, 12, 0.95) 100%);
+        border-bottom: 3px solid var(--eu-gold-dark);
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.8);
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 16px;
+    }
+
+    .eu-logo {
+        color: var(--eu-gold-bright);
+        font-size: 11px;
+        text-shadow: 2px 2px 0px #000;
+        letter-spacing: 1px;
+    }
+
+    .eu-resources {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+    }
+
+    .res-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(0, 0, 0, 0.4);
+        padding: 4px 8px;
+        border: 1px solid var(--eu-panel-border);
+        border-radius: 2px;
+        font-size: 9px;
+    }
+
+    .res-item span {
+        color: var(--eu-gold-bright);
+    }
+
+    /* 3. ИНСТРУМЕНТАЛЬНАЯ ПАНЕЛЬ И КНОПКИ УПРАВЛЕНИЯ */
+    .eu-quick-nav {
+        display: flex;
+        gap: 8px;
+    }
+
+    /* СТИЛИЗАЦИЯ КНОПОК EU4 */
+    button { 
+        font-family: var(--pixel-font);
+        font-size: 9px;
+        color: var(--eu-text); 
+        background: linear-gradient(180deg, #433527 0%, #292017 100%); 
+        border: 2px solid var(--eu-gold-dark); 
+        border-radius: 2px; 
+        padding: 6px 10px; 
+        cursor: pointer; 
+        box-shadow: inset 1px 1px 0 rgba(255,255,255,0.1), 2px 2px 4px rgba(0,0,0,0.6);
+        transition: all 0.1s ease;
+        text-transform: uppercase;
+    }
+
+    button:hover { 
+        background: linear-gradient(180deg, #574635 0%, #3a2e22 100%); 
+        border-color: var(--eu-gold);
+        color: #fff;
+    }
+
+    button:active {
+        box-shadow: inset 2px 2px 4px rgba(0,0,0,0.8);
+        transform: translateY(1px);
+    }
+
+    button[aria-pressed="true"], button.primary { 
+        background: linear-gradient(180deg, #b88339 0%, #784e1b 100%); 
+        border-color: var(--eu-gold-bright);
+        color: #fff;
+        text-shadow: 1px 1px 0 #000;
+    }
+
+    /* 4. ОВЕРЛЕИ И ВСПЛЫВАЮЩИЕ ПАНЕЛИ (EU4 MODALS) */
+    .eu-panel {
+        position: absolute;
+        background: var(--eu-panel);
+        border: 3px solid var(--eu-gold-dark);
+        box-shadow: 0 10px 30px rgba(0,0,0,0.9), inset 0 0 15px rgba(0,0,0,0.5);
+        border-radius: 4px;
+        z-index: 100;
+        display: flex;
+        flex-direction: column;
+        max-width: 360px;
+        width: 100%;
+    }
+
+    .eu-panel-header {
+        background: linear-gradient(180deg, #3d3023 0%, #201811 100%);
+        border-bottom: 2px solid var(--eu-gold-dark);
+        padding: 8px 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .eu-panel-title {
+        color: var(--eu-gold-bright);
+        font-size: 10px;
+        text-shadow: 1px 1px 0 #000;
+        margin: 0;
+    }
+
+    .eu-panel-body {
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        max-height: 70vh;
+        overflow-y: auto;
+    }
+
+    .eu-panel-close {
+        padding: 2px 6px;
+        font-size: 8px;
+        background: var(--eu-red);
+        border-color: #ff6b6b;
+    }
+
+    /* Панель генерации и меню (слева вверху) */
+    #menu-panel {
+        top: 60px;
+        left: 16px;
+    }
+
+    /* Панель инспектора / выбора региона (справа внизу) */
+    #inspector-panel {
+        bottom: 16px;
+        right: 16px;
+        width: 340px;
+    }
+
+    /* Поля ввода и переключатели */
+    input[type=number] { 
+        font-family: var(--pixel-font);
+        font-size: 9px;
+        color: var(--eu-gold-bright); 
+        background: #100d0a; 
+        border: 1px solid var(--eu-panel-border); 
+        padding: 6px; 
+        width: 80px;
+        text-align: center;
+    }
+
+    label { 
+        color: var(--eu-text); 
+        display: flex; 
+        gap: 8px; 
+        align-items: center; 
+        font-size: 8px;
+        cursor: pointer;
+    }
+
+    input[type=checkbox] {
+        accent-color: var(--eu-gold);
+        width: 14px;
+        height: 14px;
+    }
+
+    .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+    }
+
+    .selection { 
+        white-space: pre-line; 
+        background: #100d0a; 
+        border: 1px solid var(--eu-panel-border);
+        border-radius: 2px; 
+        padding: 8px; 
+        font-size: 8px;
+        color: var(--eu-text);
+        line-height: 1.6;
+    }
+
+    .hint-bar {
+        position: absolute;
+        bottom: 8px;
+        left: 16px;
+        background: rgba(0, 0, 0, 0.7);
+        border: 1px solid var(--eu-panel-border);
+        padding: 6px 10px;
+        font-size: 7px;
+        color: var(--eu-muted);
+        z-index: 5;
+        border-radius: 2px;
+        pointer-events: none;
+    }
+
+    /* Кастомная полоса прокрутки для панелей */
+    .eu-panel-body::-webkit-scrollbar { width: 6px; }
+    .eu-panel-body::-webkit-scrollbar-track { background: #120e0b; }
+    .eu-panel-body::-webkit-scrollbar-thumb { background: var(--eu-gold-dark); }
 </style>
 </head>
 <body>
-<main>
-    <h1>Генератор карты</h1>
-    <div class="controls">
-        <input id="seed" type="number" value="1" aria-label="Seed">
-        <button id="generate" class="primary">Новая карта</button>
-        <button data-view="terrain" aria-pressed="true">Рельеф</button>
-        <button data-view="temperature" aria-pressed="false">Температура</button>
-        <button data-view="regions" aria-pressed="false">Регионы</button>
-        <label><input type="checkbox" id="borders" checked>границы регионов</label>
-        <button id="fit">Вся карта</button>
-        <button id="demo-objects" aria-pressed="false">Объекты (пример)</button>
-    </div>
-    <div class="controls" role="group" aria-label="Сезон">
-        <button data-season="spring" aria-pressed="false">Весна</button>
-        <button data-season="summer" aria-pressed="true">Лето</button>
-        <button data-season="autumn" aria-pressed="false">Осень</button>
-        <button data-season="winter" aria-pressed="false">Зима</button>
-        <button id="mood" aria-pressed="true">Тёмный стиль</button>
-        <button id="settlements" aria-pressed="true">Поселения</button>
-    </div>
-    <canvas id="map" tabindex="0" aria-label="Карта мира"></canvas>
-    <p class="hint">Перетаскивайте карту мышью, колесо — зум. С клавиатуры (когда карта в фокусе): стрелки или WASD — движение, +/− — зум. Клик — выделить клетку и её регион (Esc — снять выделение).</p>
-    <p id="info"></p>
-    <div id="selection" class="selection" hidden></div>
-</main>
 
+<!-- 1. ПОЛНОЭКРАННЫЙ ХОЛСТ КАРТЫ -->
+<canvas id="map" tabindex="0" aria-label="Карта мира"></canvas>
+
+<!-- 2. ВЕРХНЯЯ ПАНЕЛЬ СТАТУСА (EU4 STYLE TOPBAR) -->
+<header class="eu-topbar">
+    <div class="eu-logo">⚔️ EU4: DARK FANTASY</div>
+    
+    <div class="eu-resources">
+        <div class="res-item">💰 <span>50</span></div>
+        <div class="res-item">🍞 <span>40</span></div>
+        <div class="res-item">👥 <span>25</span></div>
+        <div class="res-item">⚙️ <span>30</span></div>
+    </div>
+
+    <div class="eu-quick-nav">
+        <button onclick="togglePanel('menu-panel')">⚙️ Настройки</button>
+        <button id="mood" aria-pressed="true">🌑 Тёмный стиль</button>
+        <button id="demo-objects" aria-pressed="false">🏰 Объекты</button>
+    </div>
+</header>
+
+<!-- 3. ПАНЕЛЬ НАСТРОЕК / ГЕНЕРАЦИИ (ПОЛУПРОЗРАЧНЫЙ ОВЕРЛЕЙ) -->
+<div id="menu-panel" class="eu-panel">
+    <div class="eu-panel-header">
+        <h3 class="eu-panel-title">Управление Картoй</h3>
+        <button class="eu-panel-close" onclick="togglePanel('menu-panel')">✕</button>
+    </div>
+    <div class="eu-panel-body">
+        <div>
+            <label style="margin-bottom: 6px;">SEED МИРА:</label>
+            <div style="display: flex; gap: 6px;">
+                <input id="seed" type="number" value="1" aria-label="Seed">
+                <button id="generate" class="primary" style="flex: 1;">Сгенерировать</button>
+            </div>
+        </div>
+
+        <button id="fit" style="width: 100%;">🔍 Центрировать карту</button>
+
+        <div>
+            <span style="color: var(--eu-gold); font-size: 8px; display: block; margin-bottom: 6px;">РЕЖИМЫ КАРТЫ:</span>
+            <div class="grid-2">
+                <button data-view="terrain" aria-pressed="true">Рельеф</button>
+                <button data-view="temperature" aria-pressed="false">Температура</button>
+                <button data-view="regions" aria-pressed="false">Регионы</button>
+                <button id="settlements" aria-pressed="true">Поселения</button>
+            </div>
+            <label style="margin-top: 8px;"><input type="checkbox" id="borders" checked> Границы регионов</label>
+        </div>
+
+        <div>
+            <span style="color: var(--eu-gold); font-size: 8px; display: block; margin-bottom: 6px;">СЕЗОН:</span>
+            <div class="grid-2" role="group" aria-label="Сезон">
+                <button data-season="spring" aria-pressed="false">Весна</button>
+                <button data-season="summer" aria-pressed="true">Лето</button>
+                <button data-season="autumn" aria-pressed="false">Осень</button>
+                <button data-season="winter" aria-pressed="false">Зима</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 4. ПАНЕЛЬ ИНСПЕКЦИИ КЛЕТКИ / РЕГИОНА -->
+<div id="inspector-panel" class="eu-panel">
+    <div class="eu-panel-header">
+        <h3 class="eu-panel-title">Информация о Провинции</h3>
+        <button class="eu-panel-close" onclick="togglePanel('inspector-panel')">✕</button>
+    </div>
+    <div class="eu-panel-body">
+        <p id="info">Выберите провинцию на карте для исследования.</p>
+        <div id="selection" class="selection" hidden></div>
+    </div>
+</div>
+
+<!-- ПОДСКАЗКА ПО УПРАВЛЕНИЮ -->
+<div class="hint-bar">
+    [WASD / Стрелки] - Камера | [+/– / Колесо] - Зум | [Клик] - Выбрать | [Esc] - Сброс
+</div>
+
+<!-- Скрипты игры -->
 <script src="map-generator.js"></script>
 <script src="seasons.js"></script>
 <script src="map-painter.js"></script>
@@ -60,5 +356,14 @@
 <script src="sprite-examples.js"></script>
 <script src="map-renderer.js"></script>
 <script src="main.js"></script>
+
+<script>
+    function togglePanel(panelId) {
+        const panel = document.getElementById(panelId);
+        if (panel) {
+            panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+        }
+    }
+</script>
 </body>
 </html>

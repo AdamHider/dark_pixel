@@ -2,8 +2,8 @@
    Точка входа: создаём генератор и рендерер, подключаем кнопки.
    Все параметры генерации можно переопределить здесь (полный список — MapGenerator.DEFAULTS).
    ============================================================ */
-const generator = new MapGenerator({
-    size: 200,
+   const generator = new MapGenerator({
+    size: 150,
     // shapeVariety: 1,       // 0..1: изрезанность континента (заливы, полуострова)
     // islandDensity: 0.8,    // 0..1: больше островов
     // inlandSeaStrength: 0.5,// внутренние моря
@@ -41,7 +41,7 @@ function describeTile(tile) {
 
     const parts = [`(${tile.x}, ${tile.y})`, kind, `${temperatureName(tile.temperature)} (${Math.round(tile.temperature * 100)}%)`];
     if (tile.resource !== Resource.NONE && tile.resource !== Resource.SETTLEMENT) parts.push(`ресурс: ${RESOURCE_NAMES[tile.resource]}`);
-    if (tile.resource === Resource.SETTLEMENT) parts.push(`население ${tile.population} (уровень ${tile.settlementLevel})`);
+    if (tile.resource === Resource.SETTLEMENT) parts.push(`население ${tile.population} (уровень ${tile.settlementLevel}, группа из ${tile.settlementGroupSize} кл.)`);
     if (tile.roadLevel > 0) parts.push('дорога');
     if (tile.regionId >= 0) parts.push(`регион #${tile.regionId}, ${tile.regionSize} кв.`);
     return parts.join(' · ');
@@ -142,10 +142,7 @@ demoButton.addEventListener('click', () => {
     renderer.setObjects([
         { id: 'city-1', config: SPRITE_EXAMPLES.city, tile: spot(0), options: { colors: { team: '#c0392b' } } },
         { id: 'village-1', config: SPRITE_EXAMPLES.village, tile: spot(1) },
-        { id: 'army-1', config: SPRITE_EXAMPLES.army, tile: spot(2), options: { colors: { team: '#2e86c1' }, flags: ['marching'] } },
-        { id: 'black_warrior-1', config: SPRITE_EXAMPLES.black_warrior, tile: spot(3) },
-        { id: 'black_warrior-2', config: SPRITE_EXAMPLES.black_warrior, tile: spot(4) },
-        { id: 'black_warrior-3', config: SPRITE_EXAMPLES.black_warrior, tile: spot(5) },
+        { id: 'army-1', config: SPRITE_EXAMPLES.army, tile: spot(2), options: { colors: { team: '#2e86c1' }, flags: ['marching'] } }
     ]);
 });
 renderer.onObjectClick = object => {

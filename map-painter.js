@@ -291,8 +291,9 @@ class MapPainter {
             settlements: true,     // поселения (домики)
             roads: true,           // дороги между поселениями
             settlementMinHouses: 1, // домиков в самом маленьком поселении
-            settlementMaxHouses: 6, // домиков в самом большом (чем больше население, тем больше домов)
-            roundCoast: 15,         // сколько раз скруглять выпуклые прямые углы берега (0 — не скруглять)
+            settlementMaxHouses: 3, // домиков в клетке высшего уровня (если они помещаются)
+            settlementOverflow: 0.25, // на сколько (доля клетки) основание дома может выйти за границу своей клетки
+            roundCoast: 1,         // сколько раз скруглять выпуклые прямые углы берега (0 — не скруглять)
             spriteOutline: false,  // тёмный контур вокруг построек, руд и эфира (в стиле dark fantasy выключен)
             grade: true,           // в тёмном стиле: цветокоррекция, туман, виньетка
             vignette: 0.35,        // затемнение к краям карты в тёмном стиле (0 — нет)
@@ -1804,12 +1805,11 @@ class MapPainter {
 
     /* ---------- Поселения ---------- */
 
-    /* Поселение — ресурс клетки, и рисуется оно не одним домом, а небольшой группой домиков вдоль короткой улицы
-       с утоптанной землёй вокруг. Чем больше население (уровень 1–6), тем больше домов — от settlementMinHouses
-       до settlementMaxHouses; в больших поселениях есть каменная часовня. Улица смотрит в сторону дороги, которая
-       приходит в поселение, так что дороги между поселениями «втекают» в эти группы.
-       Раскладка не зависит от сезона и считается один раз; дома могут выходить за границу клетки (поселения
-       стоят не ближе трёх клеток друг к другу). */
+    /* Поселение — ресурс клетки. Каждая клетка с поселением рисуется 1–4 домиками (число зависит от её уровня) и
+       не выходит за свои границы (допуск settlementOverflow, по умолчанию 25%): так по рисунку всегда понятно, в какой
+       клетке поселение. Крупные населённые пункты получаются из групп соседних клеток (их ставит генератор): у каждой
+       свой уровень, между ними идут дорожки, а в центре самого большого города стоит каменная часовня.
+       Раскладка не зависит от сезона и считается один раз. */
     settlementLayout(x, y, i) {
         const map = this.map;
         const cache = this.settlementLayoutCache;
@@ -1827,25 +1827,17 @@ class MapPainter {
         const T = this.tileSize;
         const W = this.width;
         const level = map.settlementLevel[i] || 1;
-        const maxLevel = (map.options && map.options.settlementMaxLevel) || 6;
+        const maxLevel = (map.options && map.options.settlementMaxLevel) || 4;
         const rnd = n => hashUnit(x, y, 1000 + n);
         const n = value => Math.max(1, this.px(value));
 
-        // сколько домов
+        // Сколько домиков: от settlementMinHouses (уровень 1) до settlementMaxHouses (высший уровень).
         const share = (level - 1) / Math.max(1, maxLevel - 1);
-        const count = clamp(Math.round(o.settlementMinHouses + share * (o.settlementMaxHouses - o.settlementMinHouses) + (rnd(0) - 0.5) * 0.9),
+        const count = clamp(Math.round(o.settlementMinHouses + share * (o.settlementMaxHouses - o.settlementMinHouses)),
             o.settlementMinHouses, o.settlementMaxHouses);
 
-        // направление улицы: туда, куда уходит дорога из поселения
-        const cx = x * T + T / 2;
-        const cy = y * T + T * 0.62;
-        let angle = rnd(1) * Math.PI;
-        const links = map.roadLinks[i];
-        for (let d = 0; d < 8 && links; d++) {
-            if (links & (1 << d)) { angle = Math.atan2(ROAD_DIRECTIONS[d][1], ROAD_DIRECTIONS[d][0]); break; }
-        }
-        const ux = Math.cos(angle), uy = Math.sin(angle), vx = -uy, vy = ux;
-
+        const left = x * T, top = y * T;
+        const slack = Math.round(T * o.settlementOverflow);       // насколько основание дома может выйти за клетку
         const usable = (px, py) => {
             if (px < 0 || py < 0 || px >= W || py >= W) return false;
             const k = py * W + px;
@@ -1854,57 +1846,72 @@ class MapPainter {
         const occupied = new Set();
         const houses = [];
         const tryPlace = (centerX, baseY, w, bodyH, roofH, kind) => {
-            const left = Math.round(centerX - w / 2);
+            const houseLeft = Math.round(centerX - w / 2);
             const base = Math.round(baseY);
-            const top = base - bodyH;
-            for (let yy = top - roofH; yy <= base + 1; yy++) {
-                for (let xx = left - 1; xx <= left + w; xx++) {
+            const bodyTop = base - bodyH;
+            // Основание (стены) остаётся в клетке с допуском; крыша может уходить вверх — это перспектива, а не площадь.
+            if (houseLeft < left - slack || houseLeft + w > left + T + slack || base > top + T + slack || bodyTop < top - slack) return false;
+            for (let yy = bodyTop - roofH; yy <= base; yy++) {            // точный след дома, без полей: в клетке надо уместить до 4 домов
+                for (let xx = houseLeft; xx < houseLeft + w; xx++) {
                     if (!usable(xx, yy) || occupied.has(yy * W + xx)) return false;
                 }
             }
-            for (let yy = top - roofH; yy <= base + 1; yy++) {
-                for (let xx = left - 1; xx <= left + w; xx++) occupied.add(yy * W + xx);
+            for (let yy = bodyTop - roofH; yy <= base; yy++) {
+                for (let xx = houseLeft; xx < houseLeft + w; xx++) occupied.add(yy * W + xx);
             }
-            houses.push({ x: left + (w >> 1), base, w, bodyH, roofH, kind, roll: rnd(10 + houses.length) });
+            houses.push({ x: houseLeft + (w >> 1), base, w, bodyH, roofH, kind, roll: rnd(10 + houses.length) });
             return true;
         };
 
-        const spacing = n(9);
-        let slots = count;
-        if (level >= 5 && count >= 4) {                         // каменная часовня в конце улицы
-            for (let offset = 0; offset <= n(6) && slots === count; offset++) {
-                const along = spacing * (count / 4 + 0.6);
-                if (tryPlace(cx + ux * along + vx * offset, cy + uy * along + vy * offset, n(5), n(5), n(6), 'tower')) slots--;
-            }
+        // Места под дома: сетка в клетке (1 дом — по центру, 2–4 — в два столбца, больше — в три).
+        const columns = count <= 1 ? 1 : count <= 4 ? 2 : 3;
+        const rows = Math.ceil(count / columns);
+        const slots = [];
+        for (let k = 0; k < count; k++) {
+            const column = k % columns, row = Math.floor(k / columns);
+            const inRow = Math.min(columns, count - row * columns);
+            slots.push([
+                (column + 0.5 + (columns - inRow) / 2) / columns,
+                rows === 1 ? 0.8 : 0.5 + row * 0.46 / (rows - 1)
+            ]);
         }
 
-        let placed = 0;
-        for (let k = 0; k < slots * 4 && placed < slots; k++) {
-            const side = k % 2 ? 1 : -1;
-            const along = (Math.floor(k / 2) - (slots - 1) / 4) * spacing + (rnd(20 + k) - 0.5) * n(3);
-            const kind = rnd(40 + k) < 0.3 && level < 4 ? 'hut' : 'house';
-            const w = kind === 'hut' ? n(4) : n(5) + Math.floor(rnd(50 + k) * 3);
-            const bodyH = n(3) + (kind === 'house' && rnd(60 + k) < 0.4 ? 1 : 0);
-            const roofH = kind === 'hut' ? n(2) : n(3);
-            const nearest = slots === 1 ? 0 : n(4);               // единственный дом стоит прямо у улицы
-            for (let offset = nearest; offset <= nearest + n(7); offset++) {
-                if (tryPlace(cx + ux * along + vx * side * offset, cy + uy * along + vy * side * offset, w, bodyH, roofH, kind)) {
-                    placed++;
-                    break;
-                }
+        // Размер дома подстраивается под число домов в клетке: один — крупнее, четыре — компактнее.
+        const w = count === 1 ? n(6) : n(5);
+        const bodyH = count === 1 ? n(4) : n(3);
+        const roofH = count >= 3 ? n(2) : n(3);
+        const group = map.settlementGroups[map.settlementGroup[i]];
+        const isCenter = group && group.tile === i;
+        const nudges = [[0, 0], [-1, 0], [1, 0], [0, -1], [-2, 0], [2, 0], [0, 1], [-1, -1], [1, -1]];
+
+        slots.forEach(([fx, fy], k) => {
+            const chapel = k === 0 && level === maxLevel && isCenter && count >= 3;   // в центре города — каменная часовня
+            const kind = chapel ? 'tower' : (level === 1 && rnd(30 + k) < 0.4 ? 'hut' : 'house');
+            const size = chapel ? [n(4), n(5), n(5)] : kind === 'hut' ? [Math.max(2, w - 1), Math.max(2, bodyH - 1), Math.max(2, roofH - 1)] : [w, bodyH, roofH];
+            const jitterX = Math.round((rnd(40 + k) - 0.5) * n(2)), jitterY = Math.round((rnd(50 + k) - 0.5));
+            for (const [nx, ny] of nudges) {
+                if (tryPlace(left + fx * T + jitterX + nx * n(1), top + fy * T + jitterY + ny * n(1), ...size, kind)) return;
             }
-        }
-        for (let attempt = 0; houses.length === 0 && attempt < 12; attempt++) {   // запасной вариант: хоть один дом рядом с центром
-            tryPlace(cx + (rnd(70 + attempt) - 0.5) * n(10), cy + (rnd(90 + attempt) - 0.5) * n(8), n(5), n(3), n(3), 'house');
+        });
+        for (let attempt = 0; houses.length === 0 && attempt < 16; attempt++) {  // запасной вариант: хоть один дом в клетке
+            tryPlace(left + T / 2 + (rnd(70 + attempt) - 0.5) * n(6), top + T * 0.8 + (rnd(90 + attempt) - 0.5) * n(4), n(5), n(3), n(3), 'house');
         }
 
-        const length = spacing * (slots / 4 + 0.8) + n(5);
-        const blobs = [[cx, cy, n(6)]];
-        for (const house of houses) blobs.push([house.x, house.base - house.bodyH / 2, n(5)]);
-        return {
-            level, houses, blobs,
-            street: [[cx - ux * length, cy - uy * length], [cx + ux * length, cy + uy * length]]
-        };
+        // Утоптанная земля и улица-заготовка в сторону дороги (дороги между клетками рисует paintRoads).
+        const cx = left + T / 2;
+        const cy = top + T * 0.65;
+        let street = [[cx, cy], [cx, cy]];
+        const links = map.roadLinks[i];
+        for (let d = 0; d < 8 && links; d++) {
+            if (links & (1 << d)) {
+                const [dx, dy] = ROAD_DIRECTIONS[d];
+                street = [[cx, cy], [cx + dx * T / 2, cy + dy * T / 2]];
+                break;
+            }
+        }
+        const blobs = [[cx, cy, n(7)]];
+        for (const house of houses) blobs.push([house.x, house.base - house.bodyH / 2, n(4)]);
+        return { level, houses, blobs, street };
     }
 
     // Утоптанная земля вокруг домов и улица между ними (на земле, до деревьев и границ).
