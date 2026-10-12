@@ -145,16 +145,8 @@ export const shores = {
         const map = this.map;
         const size = map.size;
         const T = this.tileSize;
-        const field = this.coastField();
-        if (!field) return map.shore[Math.floor(gy / T) * size + Math.floor(gx / T)];
-
-        const axis = this.axis;
-        const { first, second, fraction } = axis;
-        const u = fraction[gx], v = fraction[gy];
-        const a = field[first[gy] * size + first[gx]], b = field[first[gy] * size + second[gx]];
-        const c = field[second[gy] * size + first[gx]], d = field[second[gy] * size + second[gx]];
-        const topRow = a + (b - a) * u;
-        const fv = topRow + (c + (d - c) * u - topRow) * v;
+        const fv = this.coastFieldAt(gx, gy);           // доля воды в пикселе по сглаженному полю
+        if (fv === null) return map.shore[Math.floor(gy / T) * size + Math.floor(gx / T)];
 
         // Клетки в округе: их близость к берегу и «вес» берега (утёс важнее гальки, галька важнее пляжа).
         const cx = Math.floor(gx / T), cy = Math.floor(gy / T);

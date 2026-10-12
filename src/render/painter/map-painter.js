@@ -2,6 +2,7 @@ import { hexToPacked, mixPacked, packPalette } from '../color.js';
 import { DARK_SEASONS, SEASONS } from '../seasons.js';
 import { COLORS } from './constants.js';
 import { base } from './layers/base.js';
+import { coast } from './layers/coast.js';
 import { borders } from './layers/borders.js';
 import { grading } from './layers/grading.js';
 import { hills } from './layers/hills.js';
@@ -42,7 +43,7 @@ export class MapPainter {
             tileSize: 12,
             blendSharpness: 1.5,   // насколько резко смешиваются соседние биомы (больше — резче, 1 — очень мягко)
             coastSharpness: 1.5,   // то же для границы воды и суши — а также для берегов (песок, галька) и краёв рек
-            roundCoast: 1,         // 0..3: насколько сильно скругляется береговая линия (0 — берег идёт по границам клеток)
+            coastScale: 1.15,      // насколько сильно скругляется берег (в клетках при tileSize 12; 0 — выключить)
             peakSharpness: 0.75,   // 0..1: острота гор (0 — округлые холмы-«губка», 1 — острые пики и гребни)
             mountainLift: 14,      // на сколько пикселей (для клетки 12×12) самые высокие горы поднимаются вверх, к северу
             hillStrength: 0.6,     // 0..1: заметность холмов и впадин на равнинах (0 — выключить)
@@ -169,4 +170,4 @@ export class MapPainter {
     }
 }
 
-Object.assign(MapPainter.prototype, base, tileColors, hills, shores, relief, rivers, texture, grading, props, roads, settlements, minerals, borders, scene, vegetation);
+Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers, texture, grading, props, roads, settlements, minerals, borders, scene, vegetation);

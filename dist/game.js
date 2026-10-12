@@ -2217,78 +2217,165 @@
         }
       }
       return true;
+    }
+  };
+
+  // src/render/painter/layers/coast.js
+  var coast = {
+    /* ============================ Общее ============================ */
+    // Сглаживание берега включено, если задан coastScale > 0. Размер размытия в клетках не зависит от
+    // размера клетки в пикселях, поэтому форма берега одинакова при tileSize 12, 16, ...
+    coastPasses() {
+      const scale = Number(this.options.coastScale ?? 1.15);
+      if (!(scale > 0)) return 0;
+      const cells = scale * this.tileSize / 12;
+      return Math.max(1, Math.round(cells * cells));
     },
-    /* Сглаживание берега.
-       Маска «суша/вода» размывается на уровне клеток (число проходов размытия задаёт options.roundCoast),
-       поэтому линия берега перестаёт идти по границам клеток: выпуклые прямые углы скругляются, а между
-       береговыми клетками появляются плавные заливы и мысы. Размытое поле интерполируется по пикселям, и берег
-       проводится по его середине.
-       Центр каждой клетки всегда сохраняет свой тип (ядро), поэтому клетка-суша не может целиком «уйти в воду»,
-       и при наведении на неё по-прежнему определяется равнина. */
-    smoothCoast() {
-      if (this.view !== "terrain" || !this.map.landTiles) return;
-      const field = this.coastField();
-      if (!field) return;
-      const map = this.map;
-      const size = map.size;
-      const T = this.tileSize;
-      const W = this.width;
-      const pixels = this.pixels;
-      const water = this.waterMask;
-      const axis = this.axis;
-      const { first, second, fraction } = axis;
-      const colors = this.tileColors, tileWater = this.tileWater;
-      if (!colors) return;
-      const waterColorOf = /* @__PURE__ */ new Map(), landColorOf = /* @__PURE__ */ new Map();
-      const nearestColor = (tile, cache, wantLand) => {
-        if (cache.has(tile)) return cache.get(tile);
-        let color = colors[tile];
-        const x = tile % size, y = Math.floor(tile / size);
-        for (let radius = 1; radius <= 3; radius++) {
-          let found = -1;
-          for (let dy = -radius; dy <= radius && found < 0; dy++) {
-            for (let dx = -radius; dx <= radius; dx++) {
-              const nx = x + dx, ny = y + dy;
+    // 1 — клетка на берегу (рядом есть клетка другого типа); 0 — «внутренняя». Кэшируется на карту.
+    coastKinds() {
+      const source = this.tileWater;
+      const cache = this.coastKindCache;
+      if (cache && cache.source === source) return cache.kinds;
+      const size = this.map.size;
+      const kinds = new Uint8Array(size * size);
+      for (let ty = 0; ty < size; ty++) {
+        for (let tx = 0; tx < size; tx++) {
+          const i = ty * size + tx;
+          const want = source[i];
+          for (let dy = -1; dy <= 1 && !kinds[i]; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              const nx = tx + dx, ny = ty + dy;
               if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
-              if ((tileWater[ny * size + nx] ? false : true) === wantLand) {
-                found = ny * size + nx;
+              if (source[ny * size + nx] !== want) {
+                kinds[i] = 1;
                 break;
               }
             }
           }
-          if (found >= 0) {
-            color = colors[found];
-            break;
+        }
+      }
+      this.coastKindCache = { source, kinds };
+      return kinds;
+    },
+    // Размытое поле «воды» на уровне клеток (0..1). Кэшируется.
+    coastField() {
+      const passes = this.coastPasses();
+      if (passes <= 0 || !this.tileWater) return null;
+      const cache = this.coastFieldCache;
+      if (cache && cache.passes === passes && cache.source === this.tileWater) return cache.field;
+      const size = this.map.size;
+      let field = new Float32Array(size * size);
+      for (let i = 0; i < field.length; i++) field[i] = this.tileWater[i] ? 1 : 0;
+      for (let p = 0; p < passes; p++) field = this.coastBlur(field, size);
+      this.coastFieldCache = { passes, source: this.tileWater, field };
+      return field;
+    },
+    // Размытие 3×3, раздельно по осям (дешевле).
+    coastBlur(src, size) {
+      const tmp = new Float32Array(src.length);
+      const out = new Float32Array(src.length);
+      const blurAxis = (input2, output, horizontal) => {
+        for (let y = 0; y < size; y++) {
+          for (let x = 0; x < size; x++) {
+            let sum = 0, count = 0;
+            for (let d = -1; d <= 1; d++) {
+              const nx = horizontal ? x + d : x, ny = horizontal ? y : y + d;
+              if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+              sum += input2[ny * size + nx];
+              count++;
+            }
+            output[y * size + x] = sum / count;
           }
         }
-        cache.set(tile, color);
-        return color;
       };
+      blurAxis(src, tmp, true);
+      blurAxis(tmp, out, false);
+      return out;
+    },
+    // Доля воды (0..1) в пикселе по размытому полю (билинейно).
+    coastFieldAt(gx, gy) {
+      const field = this.coastField();
+      if (!field) return null;
+      const size = this.map.size;
+      const { first, second, fraction } = this.axis;
+      const u = fraction[gx], v = fraction[gy];
+      const a = field[first[gy] * size + first[gx]], b = field[first[gy] * size + second[gx]];
+      const c = field[second[gy] * size + first[gx]], d = field[second[gy] * size + second[gx]];
+      const top = a + (b - a) * u;
+      return top + (c + (d - c) * u - top) * v;
+    },
+    // Цвет ближайшей клетки нужного типа (для пикселя, отошедшего на «чужую» сторону). Кэш per-kind.
+    coastColor(tile, wantLand, cache) {
+      if (cache.has(tile)) return cache.get(tile);
+      const size = this.map.size;
+      const source = this.tileWater;
+      let color = this.tileColors[tile];
+      const x = tile % size, y = Math.floor(tile / size);
+      for (let radius = 1; radius <= 3; radius++) {
+        let found = -1;
+        for (let dy = -radius; dy <= radius && found < 0; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+            if (source[ny * size + nx] === 0 === wantLand) {
+              found = ny * size + nx;
+              break;
+            }
+          }
+        }
+        if (found >= 0) {
+          color = this.tileColors[found];
+          break;
+        }
+      }
+      cache.set(tile, color);
+      return color;
+    },
+    // Есть ли в клетке или рядом (8 соседей) суша.
+    hasLandNeighbor(tile) {
+      const size = this.map.size;
+      const x = tile % size, y = Math.floor(tile / size);
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+          if (!this.tileWater[ny * size + nx]) return true;
+        }
+      }
+      return false;
+    },
+    /* ============================ Слои ============================ */
+    /* Скругление берега. Пиксель получает тип по размытому полю, но лишь в клетках на берегу (coastKinds).
+       Внутренние клетки не трогаются — вода остаётся водой, суша сушей, «обводки» посреди массива нет. */
+    smoothCoast() {
+      if (this.view !== "terrain" || !this.tileColors) return;
+      const field = this.coastField();
+      if (!field) return;
+      const size = this.map.size;
+      const T = this.tileSize;
+      const W = this.width;
+      const pixels = this.pixels;
+      const water = this.waterMask;
+      const kinds = this.coastKinds();
       const shallow = this.packed.waterShades[0];
-      const halfT = T / 2;
+      const waterCache = /* @__PURE__ */ new Map(), landCache = /* @__PURE__ */ new Map();
       for (let ty = 0; ty < size; ty++) {
         for (let tx = 0; tx < size; tx++) {
-          const baseWater = tileWater[ty * size + tx] ? 1 : 0;
           const tile = ty * size + tx;
+          if (!kinds[tile]) continue;
+          const wantWater = this.tileWater[tile] ? 1 : 0;
+          if (wantWater && !this.hasLandNeighbor(tile)) continue;
           const x0 = tx * T, y0 = ty * T;
-          const coreX = x0 + (T >> 1), coreY = y0 + (T >> 1);
           for (let gy = y0; gy < y0 + T; gy++) {
-            const r0 = first[gy] * size, r1 = second[gy] * size, v = fraction[gy];
             for (let gx = x0; gx < x0 + T; gx++) {
-              const u = fraction[gx];
-              const a = field[r0 + first[gx]], b = field[r0 + second[gx]];
-              const c = field[r1 + first[gx]], d = field[r1 + second[gx]];
-              const topRow = a + (b - a) * u;
-              const fv = topRow + (c + (d - c) * u - topRow) * v;
-              const bias = (baseWater - 0.5) * this.coastCore(Math.abs(gx - coreX) / halfT, Math.abs(gy - coreY) / halfT);
-              const newWater = fv + bias > 0.5 ? 1 : 0;
-              if (newWater === baseWater) continue;
               const k = gy * W + gx;
-              if (newWater) {
-                pixels[k] = mixPacked(nearestColor(tile, waterColorOf, false), shallow, 0.6);
+              const isWater = this.coastFieldAt(gx, gy) > 0.5 ? 1 : 0;
+              if (isWater === wantWater) continue;
+              if (isWater) {
+                pixels[k] = mixPacked(this.coastColor(tile, false, waterCache), shallow, 0.6);
                 water[k] = 1;
               } else {
-                pixels[k] = nearestColor(tile, landColorOf, true);
+                pixels[k] = this.coastColor(tile, true, landCache);
                 water[k] = 0;
               }
             }
@@ -2296,159 +2383,59 @@
         }
       }
     },
-    // Насколько пиксель «принадлежит ядру» своей клетки: 1 в центре, 0 у края. Держит центр клетки её типа.
-    coastCore(dx, dy) {
-      const r = Math.min(1, Math.max(dx, dy));
-      return 1 - smoothstep(clamp((r - 0.35) / 0.65));
-    },
-    /* После скругления берега появились «лишние» пиксели воды на клетках-суше (и наоборот). Достраиваем их:
-       вода на суше становится землёй (цвет ближайшей суши), суша в воде — мелководьем. Так маска воды везде
-       совпадает с картинкой, а клетка на берегу больше не «двулична». */
+    /* Досыпка/уборка пикселей на берегу, чтобы картинка совпадала с типом клетки: в клетке-суше вода
+       становится землёй (цвет ближайшей суши), в клетке-воде суша становится мелководьем. Трогаются только
+       клетки на берегу, поэтому «двуличных» клеток не остаётся. */
     decorateWaterMask() {
       if (this.view !== "terrain" || !this.tileColors) return;
-      const map = this.map;
-      const size = map.size;
+      const field = this.coastField();
+      if (!field) return;
+      const size = this.map.size;
       const T = this.tileSize;
       const W = this.width;
       const pixels = this.pixels;
       const water = this.waterMask;
-      const colors = this.tileColors, tileWater = this.tileWater;
-      const field = this.coastField();
-      if (!field) return;
-      const axis = this.axis;
-      const { first, second, fraction } = axis;
-      const halfT = T / 2;
-      const waterColorOf = /* @__PURE__ */ new Map(), landColorOf = /* @__PURE__ */ new Map();
-      const nearestColor = (tile, cache, wantLand) => {
-        if (cache.has(tile)) return cache.get(tile);
-        let color = colors[tile];
-        const x = tile % size, y = Math.floor(tile / size);
-        for (let radius = 1; radius <= 3; radius++) {
-          let found = -1;
-          for (let dy = -radius; dy <= radius && found < 0; dy++) {
-            for (let dx = -radius; dx <= radius; dx++) {
-              const nx = x + dx, ny = y + dy;
-              if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
-              if ((tileWater[ny * size + nx] ? false : true) === wantLand) {
-                found = ny * size + nx;
-                break;
-              }
-            }
-          }
-          if (found >= 0) {
-            color = colors[found];
-            break;
-          }
-        }
-        cache.set(tile, color);
-        return color;
-      };
+      const kinds = this.coastKinds();
+      const shallow = this.packed.waterShades[0];
+      const waterCache = /* @__PURE__ */ new Map(), landCache = /* @__PURE__ */ new Map();
+      const half = T * T >> 1;
       for (let ty = 0; ty < size; ty++) {
         for (let tx = 0; tx < size; tx++) {
           const tile = ty * size + tx;
-          if (!tileWater[tile]) continue;
+          if (!kinds[tile]) continue;
+          const wantWater = this.tileWater[tile] ? 1 : 0;
+          if (wantWater && !this.hasLandNeighbor(tile)) continue;
           const x0 = tx * T, y0 = ty * T;
-          const coreX = x0 + (T >> 1), coreY = y0 + (T >> 1);
-          for (let gy = y0; gy < y0 + T; gy++) {
-            const r0 = first[gy] * size, r1 = second[gy] * size, v = fraction[gy];
-            for (let gx = x0; gx < x0 + T; gx++) {
-              const k = gy * W + gx;
-              if (!water[k]) continue;
-              const u = fraction[gx];
-              const a = field[r0 + first[gx]], b = field[r0 + second[gx]];
-              const c = field[r1 + first[gx]], d = field[r1 + second[gx]];
-              const topRow = a + (b - a) * u;
-              const fv = topRow + (c + (d - c) * u - topRow) * v;
-              const bias = 0.5 * this.coastCore(Math.abs(gx - coreX) / halfT, Math.abs(gy - coreY) / halfT);
-              if (fv + bias >= 0.5) continue;
-              pixels[k] = nearestColor(tile, landColorOf, true);
-              water[k] = 0;
-            }
-          }
-        }
-      }
-      const shallowColor = this.packed.waterShades[0];
-      for (let ty = 0; ty < size; ty++) {
-        for (let tx = 0; tx < size; tx++) {
-          const tile = ty * size + tx;
-          const wantWater = tileWater[tile] ? 1 : 0;
-          const x0 = tx * T, y0 = ty * T;
-          const coreX = x0 + (T >> 1), coreY = y0 + (T >> 1);
           let wet = 0;
           for (let gy = y0; gy < y0 + T; gy++) {
             for (let gx = x0; gx < x0 + T; gx++) if (water[gy * W + gx]) wet++;
           }
-          const half = T * T >> 1;
           if (wantWater ? wet >= half : wet <= half) continue;
-          const far = [];
+          const cx = x0 + T / 2, cy = y0 + T / 2;
+          const wrong = [];
           for (let gy = y0; gy < y0 + T; gy++) {
             for (let gx = x0; gx < x0 + T; gx++) {
               const k = gy * W + gx;
-              if (wantWater ? !water[k] : water[k]) {
-                const dx = Math.abs(gx - coreX) / halfT, dy = Math.abs(gy - coreY) / halfT;
-                far.push([Math.max(dx, dy), k]);
-              }
+              if ((water[k] ? 1 : 0) === wantWater) continue;
+              const dx = Math.abs(gx - cx) / (T / 2), dy = Math.abs(gy - cy) / (T / 2);
+              wrong.push([Math.max(dx, dy), k]);
             }
           }
-          far.sort((p, q) => q[0] - p[0]);
-          for (const [, k] of far) {
+          wrong.sort((p, q) => q[0] - p[0]);
+          for (const [, k] of wrong) {
             if (wantWater ? wet >= half : wet <= half) break;
             if (wantWater) {
-              pixels[k] = mixPacked(nearestColor(tile, waterColorOf, false), shallowColor, 0.6);
+              pixels[k] = mixPacked(this.coastColor(tile, false, waterCache), shallow, 0.6);
               water[k] = 1;
               wet++;
             } else {
-              pixels[k] = nearestColor(tile, landColorOf, true);
+              pixels[k] = this.coastColor(tile, true, landCache);
               water[k] = 0;
               wet--;
             }
           }
         }
       }
-    },
-    // Размытое поле «воды» на уровне клеток (1 — вода, 0 — суша). Число проходов размытия — это и есть уровень скругления.
-    coastField() {
-      const passes = this.options.coastSmoothing === false ? 0 : Math.max(0, Math.round(this.options.roundCoast ?? 1));
-      if (passes <= 0 || !this.tileWater) return null;
-      if (this.coastFieldCache && this.coastFieldCache.passes === passes && this.coastFieldCache.source === this.tileWater) {
-        return this.coastFieldCache.field;
-      }
-      const size = this.map.size;
-      let field = new Float32Array(size * size);
-      for (let i = 0; i < field.length; i++) field[i] = this.tileWater[i] ? 1 : 0;
-      for (let p = 0; p < passes; p++) field = this.blurField(field, size);
-      this.coastFieldCache = { passes, source: this.tileWater, field };
-      return field;
-    },
-    // Размытие 3×3 (раздельное по осям, чтобы было дешевле).
-    blurField(src, size) {
-      const tmp = new Float32Array(src.length);
-      const out = new Float32Array(src.length);
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-          let sum = 0, count = 0;
-          for (let dx = -1; dx <= 1; dx++) {
-            const nx = x + dx;
-            if (nx < 0 || nx >= size) continue;
-            sum += src[y * size + nx];
-            count++;
-          }
-          tmp[y * size + x] = sum / count;
-        }
-      }
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-          let sum = 0, count = 0;
-          for (let dy = -1; dy <= 1; dy++) {
-            const ny = y + dy;
-            if (ny < 0 || ny >= size) continue;
-            sum += tmp[ny * size + x];
-            count++;
-          }
-          out[y * size + x] = sum / count;
-        }
-      }
-      return out;
     }
   };
 
@@ -4009,15 +3996,8 @@
       const map = this.map;
       const size = map.size;
       const T = this.tileSize;
-      const field = this.coastField();
-      if (!field) return map.shore[Math.floor(gy / T) * size + Math.floor(gx / T)];
-      const axis = this.axis;
-      const { first, second, fraction } = axis;
-      const u = fraction[gx], v = fraction[gy];
-      const a = field[first[gy] * size + first[gx]], b = field[first[gy] * size + second[gx]];
-      const c = field[second[gy] * size + first[gx]], d = field[second[gy] * size + second[gx]];
-      const topRow = a + (b - a) * u;
-      const fv = topRow + (c + (d - c) * u - topRow) * v;
+      const fv = this.coastFieldAt(gx, gy);
+      if (fv === null) return map.shore[Math.floor(gy / T) * size + Math.floor(gx / T)];
       const cx = Math.floor(gx / T), cy = Math.floor(gy / T);
       let beach = 0, rocky = 0, cliff = 0, sum = 0;
       for (let dy = -2; dy <= 2; dy++) {
@@ -4431,8 +4411,8 @@
         // насколько резко смешиваются соседние биомы (больше — резче, 1 — очень мягко)
         coastSharpness: 1.5,
         // то же для границы воды и суши — а также для берегов (песок, галька) и краёв рек
-        roundCoast: 1,
-        // 0..3: насколько сильно скругляется береговая линия (0 — берег идёт по границам клеток)
+        coastScale: 1.15,
+        // насколько сильно скругляется берег (в клетках при tileSize 12; 0 — выключить)
         peakSharpness: 0.75,
         // 0..1: острота гор (0 — округлые холмы-«губка», 1 — острые пики и гребни)
         mountainLift: 14,
@@ -4565,7 +4545,7 @@
       return points;
     }
   };
-  Object.assign(MapPainter.prototype, base, tileColors, hills, shores, relief, rivers2, texture, grading, props, roads2, settlements2, minerals, borders, scene, vegetation);
+  Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers2, texture, grading, props, roads2, settlements2, minerals, borders, scene, vegetation);
 
   // src/render/renderer/camera.js
   var camera = {
