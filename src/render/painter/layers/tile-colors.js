@@ -76,7 +76,7 @@ export const tileColors = {
     // Внутри одного биома цвет зависит от плодородия: влажные места гуще и темнее, сухие светлее и желтее.
     fertilityTint(i, color) {
         const biome = this.map.biome[i];
-        if (biome === Biome.TUNDRA || biome === Biome.DESERT) return color;
+        if (biome === Biome.TUNDRA || biome === Biome.DESERT || biome === Biome.DEAD_LAND || biome === Biome.ETHER_LAND) return color;
 
         const wet = this.nearRiver(i) ? 0.3 : 0;                    // у воды земля влажнее и зеленее
         const moisture = Math.round(Math.min(1, this.map.moisture[i] + wet) * 5) / 5; // 6 ступеней: меньше «грязи» на стыках клеток

@@ -1,5 +1,5 @@
 import { rankNormalize } from '../../core/math.js';
-import { Resource, Terrain } from '../constants.js';
+import { Biome, Resource, Terrain } from '../constants.js';
 
 /* Этап генерации: ресурсы (лес, поля, руда, эфир) */
 
@@ -11,6 +11,7 @@ export const resources = {
 
         for (const i of this.landTiles) {
             if (this.terrain[i] !== Terrain.PLAIN) continue;
+            if (this.biome[i] === Biome.DEAD_LAND || this.biome[i] === Biome.ETHER_LAND) continue; // на мёртвых и эфирных землях не растёт
 
             const t = this.temperature[i];
             const m = this.moisture[i];
@@ -22,6 +23,55 @@ export const resources = {
             if (goodForWood && roll < o.woodChance) this.resource[i] = Resource.WOOD;
             else if (goodForWheat && roll < o.wheatChance) this.resource[i] = Resource.WHEAT;
         }
+    },
+
+    /* Поля раскладываем ещё и «по одному на регион» (после того как регионы построены): регионам, где пшеницы мало,
+       добавляем поля в самых подходящих клетках. Так пшеница есть по всей карте, а не только там, где удачно лёг шум. */
+    distributeWheat() {
+        const o = this.options;
+        if (o.wheatMinPerRegion <= 0) return;
+
+        const fields = this.createPatchLayer(this.noise.fertility, o.wheatScale, o.wheatShare, this.noise.fertilityClumps, o.clumpScale, o.wheatClumpShare);
+        const byRegion = new Map();
+        for (const i of this.landTiles) {
+            const id = this.regionId[i];
+            if (id < 0) continue;
+            if (!byRegion.has(id)) byRegion.set(id, { have: 0, sites: [] });
+            const entry = byRegion.get(id);
+            if (this.resource[i] === Resource.WHEAT) { entry.have++; continue; }
+            if (this.isWheatSite(i)) entry.sites.push(i);
+        }
+
+        // Регионы по возрастанию числа полей: сперва наделяем обделённые, потом уже богатые.
+        const ordered = [...byRegion.values()].filter(entry => entry.have < o.wheatMinPerRegion);
+        ordered.sort((a, b) => a.have - b.have);
+        for (const entry of ordered) {
+            // Лучшие места — где плодороднее (шум полей, влага, близость реки); при равенстве добавляем случайность.
+            entry.sites.sort((a, b) => (this.wheatScore(b, fields) - this.wheatScore(a, fields)) || (this.random() - 0.5));
+            for (const i of entry.sites) {
+                if (entry.have >= o.wheatMinPerRegion) break;
+                this.resource[i] = Resource.WHEAT;
+                entry.have++;
+            }
+        }
+    },
+
+    // Насколько клетка хороша под поле: плодородие, умеренная влага, близость реки.
+    wheatScore(i, fields) {
+        const wet = this.neighbors(i).some(j => this.river[j] > 0);
+        return (fields ? fields[i] : 0) * 0.8
+            + (1 - Math.abs(this.moisture[i] - 0.55)) * 0.6
+            + (1 - Math.abs(this.temperature[i] - 0.55)) * 0.4
+            + (wet ? 0.3 : 0);
+    },
+
+    // Подходит ли клетка под поле: равнина, не река, свободна, тёплый умеренный климат и не мёртвая/эфирная земля.
+    isWheatSite(i) {
+        return this.terrain[i] === Terrain.PLAIN && this.river[i] === 0 && this.resource[i] === Resource.NONE
+            && this.biome[i] !== Biome.DEAD_LAND && this.biome[i] !== Biome.ETHER_LAND
+            && this.biome[i] !== Biome.TUNDRA && this.biome[i] !== Biome.DESERT
+            && this.temperature[i] > 0.18 && this.temperature[i] < 0.85
+            && this.moisture[i] > 0.1 && this.moisture[i] < 0.9;
     },
 
     // «Пятна» ресурса: крупные скопления плюс мелкие разрозненные кучки. Вместе дают хаотичное, но не пустое распределение.
@@ -110,6 +160,14 @@ export const resources = {
         for (const i of this.landTiles) {
             if (this.river[i] || this.resource[i] !== Resource.NONE) continue;
             if (faults[i] > 1 - o.etherShare && this.random() < o.etherChance) this.resource[i] = Resource.ETHER;
+        }
+
+        // В землях эфира кристаллы — обычное дело, там их густо (плотность регулируется etherLandDensity).
+        if (o.etherLandShare > 0 && o.etherLandDensity > 0) {
+            for (const i of this.landTiles) {
+                if (this.biome[i] !== Biome.ETHER_LAND || this.river[i] || this.resource[i] !== Resource.NONE) continue;
+                if (this.random() < o.etherLandDensity) this.resource[i] = Resource.ETHER;
+            }
         }
     },
 

@@ -30,12 +30,15 @@ export const relief = {
         const { first, second, fraction } = this.axis;
         const broad = new LatticeNoise(W, Math.max(6, this.px(34)), 501 + this.seedSalt);
         const fine = new LatticeNoise(W, Math.max(4, this.px(16)), 502 + this.seedSalt);
+        const fine2 = new LatticeNoise(W, Math.max(3, this.px(9)), 504 + this.seedSalt);
         const warp = new LatticeNoise(W, Math.max(6, this.px(26)), 503 + this.seedSalt);
+        const grain = new LatticeNoise(W, Math.max(3, this.px(6)), 505 + this.seedSalt);
         const crestWeight = 0.2 + 0.4 * sharp;   // насколько рельеф определяется гребнями
         const crestPower = 1 + 2.5 * sharp;        // чем больше, тем тоньше и острее гребни
         const powerTable = (power) => Float32Array.from({ length: 256 }, (_, n) => Math.pow(n / 255, power)); // x^power без Math.pow в цикле
         const coarseTable = powerTable(crestPower);
         const fineTable = powerTable(1 + 2 * sharp);
+        const fineTable2 = powerTable(0.7 + 1.6 * sharp);
         const wrap = this.px(18);
 
         for (const tile of zone) {
@@ -56,8 +59,11 @@ export const relief = {
                     const wy = Math.min(W - 1, Math.max(0, gy - shift));
                     const crestA = coarseTable[Math.round((1 - Math.abs(2 * broad.at(wx, wy) - 1)) * 255)];
                     const crestB = fineTable[Math.round((1 - Math.abs(2 * fine.at(wx, wy) - 1)) * 255)];
-                    const crest = 0.7 * crestA + 0.3 * crestB;
-                    const h = base * ((1 - crestWeight) + crestWeight * 1.7 * crest);
+                    const crestC = fineTable2[Math.round((1 - Math.abs(2 * fine2.at(wx, wy) - 1)) * 255)];
+                    // Три масштаба гребней: крупные хребты, средние отроги и мелкая каменистая фактура.
+                    const crest = 0.58 * crestA + 0.26 * crestB + 0.16 * crestC;
+                    const rugged = 1 + (grain.at(gx, gy) - 0.5) * 0.28;   // неровности поверхности
+                    const h = base * ((1 - crestWeight) + crestWeight * 1.7 * crest) * rugged;
                     height[gy * W + gx] = Math.round(clamp(h) * 255);
                 }
             }
@@ -181,7 +187,12 @@ export const relief = {
                     // Свет падает слева сверху: склон, повёрнутый к северо-западу (юго-восток выше), светлый.
                     const northWest = k > W + 1 ? height[k - W - 1] : raw;
                     const southEast = k < last - W - 1 ? height[k + W + 1] : raw;
-                    let tone = Math.round(2 + (southEast - northWest) * (20 / 255) + (h - 0.45) * 2.6 + (threshold - 0.5) * 0.35);
+                    // Ложбины и ущелья: если пиксель ниже и западного, и восточного соседа — это дно складки, оно в тени.
+                    const west = k > 0 ? height[k - 1] : raw;
+                    const east = k < last ? height[k + 1] : raw;
+                    const crease = ((west + east) * 0.5 - raw) * (3 / 255);
+                    let tone = Math.round(2 + (southEast - northWest) * (20 / 255) + (h - 0.45) * 2.6
+                        + (threshold - 0.5) * 0.35 - Math.min(1.3, Math.max(0, crease)));
                     tone = tone < 0 ? 0 : tone > 4 ? 4 : tone;
 
                     const palette = h + (threshold - 0.5) * 0.08 > snowLevel ? snowRamp : ramp;

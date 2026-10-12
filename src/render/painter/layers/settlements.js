@@ -90,7 +90,11 @@ export const settlements = {
             const chapel = k === 0 && level === maxLevel && isCenter && count >= 3;   // в центре города — каменная часовня
             const kind = chapel ? 'tower' : (level === 1 && rnd(30 + k) < 0.4 ? 'hut' : 'house');
             const size = chapel ? [n(4), n(5), n(5)] : kind === 'hut' ? [Math.max(2, w - 1), Math.max(2, bodyH - 1), Math.max(2, roofH - 1)] : [w, bodyH, roofH];
-            const jitterX = Math.round((rnd(40 + k) - 0.5) * n(2)), jitterY = Math.round((rnd(50 + k) - 0.5));
+            // Заметный разброс по обеим осям (плюс сдвиг соседних домов в разные стороны), чтобы домики
+            // в одной клетке не выстраивались на одну линию — иначе поселение выглядит «наклеенным».
+            const stagger = (k & 1 ? 1 : -1) * n(1);
+            const jitterX = Math.round((rnd(40 + k) - 0.5) * n(5)) + stagger;
+            const jitterY = Math.round((rnd(50 + k) - 0.5) * n(4)) + stagger;
             for (const [nx, ny] of nudges) {
                 if (tryPlace(left + fx * T + jitterX + nx * n(1), top + fy * T + jitterY + ny * n(1), ...size, kind)) return;
             }

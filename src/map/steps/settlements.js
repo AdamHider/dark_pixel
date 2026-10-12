@@ -22,26 +22,37 @@ export const settlements = {
             sums[id] = (sums[id] || 0) + habitability[i];
         }
 
-        const candidates = [];
+        // Население каждого региона и сколько групп поселений ему положено (1..settlementsPerRegionMax).
+        const regions = [];
         for (const key of Object.keys(sums)) {
             const id = Number(key);
             const gauss = (this.random() + this.random() + this.random() - 1.5) / 0.5; // ≈ нормальное распределение
             const population = Math.round(sums[id] * o.populationPerHabitability * Math.exp(gauss * o.populationVariation));
             this.regionPopulation[id] = population;
-            if (population >= o.settlementMinPopulation) candidates.push({ regionId: id, population });
+            if (population < o.settlementMinPopulation) continue;
+
+            let groups = clamp(
+                1 + Math.floor(Math.log(population / o.settlementMinPopulation) / Math.log(o.settlementGroupGrowth)),
+                1, o.settlementsPerRegionMax);
+            if (population >= o.secondSettlementPopulation) groups = Math.max(2, groups); // крупному региону — минимум две группы
+            regions.push({ regionId: id, population, groups, placed: 0, perGroup: Math.max(1, Math.round(population / groups)) });
         }
 
-        // Крупные группы ставим первыми: они занимают лучшие места, мелкие устраиваются вокруг.
-        candidates.sort((a, b) => b.population - a.population);
+        // Крупные регионы первыми: им достаются лучшие места. Дальше идут «раунды» —
+        // в каждом по одному поселению на регион, поэтому поселения распределяются по карте равномерно.
+        regions.sort((a, b) => b.population - a.population);
         const blocked = new Uint8Array(this.terrain.length);
-        for (const candidate of candidates) {
-            const shares = candidate.population >= o.secondSettlementPopulation ? [0.62, 0.38] : [1];
-            for (const share of shares) {
-                const population = Math.round(candidate.population * share);
-                if (population < o.settlementMinPopulation) continue;
-                const group = this.growSettlementGroup(candidate.regionId, tilesByRegion[candidate.regionId], habitability, blocked, population);
-                if (group) this.commitSettlementGroup(group, population, blocked);
+        for (let round = 0; round < o.settlementsPerRegionMax; round++) {
+            let placedAny = false;
+            for (const region of regions) {
+                if (region.placed >= region.groups) continue;
+                const group = this.growSettlementGroup(region.regionId, tilesByRegion[region.regionId], habitability, blocked, region.perGroup);
+                if (!group) { region.groups = region.placed; continue; }   // в регионе больше негде ставить
+                this.commitSettlementGroup(group, region.perGroup, blocked);
+                region.placed++;
+                placedAny = true;
             }
+            if (!placedAny) break;
         }
     },
 
@@ -55,8 +66,9 @@ export const settlements = {
     // Подходит ли клетка под поселение.
     isSettlementSite(i, regionId, habitability, blocked) {
         return this.terrain[i] === Terrain.PLAIN && !this.river[i] && !blocked[i] && habitability[i] > 0
+            && this.biome[i] !== Biome.DEAD_LAND && this.biome[i] !== Biome.ETHER_LAND
             && this.regionId[i] === regionId && this.shore[i] !== Shore.CLIFF
-            && ![Resource.GOLD, Resource.IRON, Resource.ETHER, Resource.SETTLEMENT].includes(this.resource[i]);
+            && ![Resource.GOLD, Resource.IRON, Resource.ETHER, Resource.SETTLEMENT, Resource.WHEAT].includes(this.resource[i]);
     },
 
     // Выбирает лучшую клетку региона и наращивает вокруг неё группу из соседних клеток (до settlementMaxGroup).
@@ -127,7 +139,8 @@ export const settlements = {
     computeHabitability() {
         const byBiome = {
             [Biome.GRASSLAND]: 1, [Biome.SAVANNA]: 0.65, [Biome.STEPPE]: 0.6,
-            [Biome.TAIGA]: 0.55, [Biome.TUNDRA]: 0.15, [Biome.DESERT]: 0.1
+            [Biome.TAIGA]: 0.55, [Biome.TUNDRA]: 0.15, [Biome.DESERT]: 0.1,
+            [Biome.DEAD_LAND]: 0.03, [Biome.ETHER_LAND]: 0.05
         };
         const habitability = new Float32Array(this.terrain.length);
         for (const i of this.landTiles) {

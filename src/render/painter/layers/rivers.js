@@ -218,38 +218,84 @@ export const rivers = {
     },
 
     // Переправа: каменный мост (река глубже 1) или брод из камней (ручей). Рисуется поперёк течения.
+    // Русло ищем в окрестности клетки (а не только в ней самой): у широких рек берега лежат в соседних клетках,
+    // поэтому мост должен идти от настоящего берега до настоящего берега, а не висеть посреди воды.
     paintCrossing(x, y, i) {
         const map = this.map;
         const T = this.tileSize;
+        const W = this.width;
         const c = this.colors;
+        const mask = this.riverMask;
         const to = map.riverTo[i];
         const flowX = to === -1 ? 0 : (to % map.size) - x;
         const flowY = to === -1 ? 0 : Math.floor(to / map.size) - y;
-        const horizontalFlow = to === -1
+
+        const left = x * T, top = y * T;
+        const middle = Math.floor(T / 2);
+
+        // Границы русла: идём поперёк течения от центра клетки в обе стороны, пока не кончится вода реки.
+        const bank = Math.max(1, this.px(2));
+        const maxReach = Math.max(T * 2, this.px(48));      // даже очень широкие устья/озёра: идём до настоящего берега
+        const riverRun = horizontal => {
+            const alongCenter = (horizontal ? left : top) + middle;
+            const acrossCenter = (horizontal ? top : left) + middle;
+            const at = b => {
+                const ax = horizontal ? alongCenter : b;
+                const ay = horizontal ? b : alongCenter;
+                if (ax < 0 || ay < 0 || ax >= W || ay >= W) return false;
+                return !!(mask && mask[ay * W + ax]);
+            };
+            if (!at(acrossCenter)) return null;
+            let lo = acrossCenter, hi = acrossCenter;
+            while (lo > acrossCenter - maxReach && at(lo - 1)) lo--;
+            while (hi < acrossCenter + maxReach && at(hi + 1)) hi++;
+            return { lo, hi };
+        };
+
+        let horizontalFlow = to === -1
             ? x > 0 && x < map.size - 1 && map.river[i - 1] > 0 && map.river[i + 1] > 0
             : Math.abs(flowX) >= Math.abs(flowY);
+        let run = mask ? riverRun(horizontalFlow) : null;
+        // Выбираем ориентацию, при которой поперёк течения река самая узкая: у широких устьев верный выбор
+        // не даёт мосту «висеть» вдоль воды. Если маски нет — доверяем направлению течения.
+        if (mask) {
+            const alt = riverRun(!horizontalFlow);
+            const curSpan = run ? run.hi - run.lo : Infinity;
+            const altSpan = alt ? alt.hi - alt.lo : Infinity;
+            if (altSpan < curSpan) { horizontalFlow = !horizontalFlow; run = alt; }
+        }
+
+        let acrossFrom, acrossTo;
+        if (run) {
+            acrossFrom = run.lo - bank;
+            acrossTo = run.hi + bank;
+        } else {
+            const acrossCenter = (horizontalFlow ? top : left) + middle;
+            acrossFrom = acrossCenter - Math.round(this.riverWidthAt(i) / 2) - bank;
+            acrossTo = acrossCenter + Math.round(this.riverWidthAt(i) / 2) + bank;
+        }
+        acrossFrom = Math.max(0, acrossFrom);
+        acrossTo = Math.min(W - 1, acrossTo);
+        const span = acrossTo - acrossFrom + 1;
+        const alongCenter = (horizontalFlow ? left : top) + middle;
 
         // Работаем в координатах «вдоль течения» (a) и «поперёк течения» (b), затем переводим в x, y.
         const put = (a, b, w, h, color) => (horizontalFlow
-            ? this.rect(x * T + a, y * T + b, w, h, color)
-            : this.rect(x * T + b, y * T + a, h, w, color));
-        const middle = Math.floor(T / 2);
-        const river = this.riverWidthAt(i);
+            ? this.rect(a, b, w, h, color)
+            : this.rect(b, a, h, w, color));
 
         if (map.crossing[i] === 2) {
-            const length = Math.min(T, river + this.px(4));   // мост выступает за оба берега
             const thickness = this.px(5);
-            const a0 = middle - (thickness >> 1);
-            const b0 = middle - (length >> 1);
-            put(a0, b0, thickness, length, c.bridgeDeck);
-            put(a0, b0, 1, length, c.bridgeEdge);
-            put(a0 + thickness - 1, b0, 1, length, c.bridgeEdge);
+            const a0 = alongCenter - (thickness >> 1);
+            put(a0, acrossFrom, thickness, span, c.bridgeDeck);
+            put(a0, acrossFrom, 1, span, c.bridgeEdge);
+            put(a0 + thickness - 1, acrossFrom, 1, span, c.bridgeEdge);
         } else {
-            const stones = 3;
+            const stones = Math.max(2, Math.min(6, Math.round(span / this.px(3))));
             for (let k = 0; k < stones; k++) {
-                const b = middle - (river >> 1) + Math.round(k * (river - 2) / (stones - 1)) - 1;
-                put(middle - 1, b, 2, 2, c.stone);
-                put(middle, b + 1, 1, 1, c.stoneShadow);
+                const b = acrossFrom + Math.round(k * (span - 2) / (stones - 1));
+                put(alongCenter - 1, b, 2, 2, c.stone);
+                put(alongCenter, b + 1, 1, 1, c.stoneShadow);
             }
         }
     },

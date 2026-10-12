@@ -42,6 +42,7 @@ export class MapPainter {
             tileSize: 12,
             blendSharpness: 1.5,   // насколько резко смешиваются соседние биомы (больше — резче, 1 — очень мягко)
             coastSharpness: 1.5,   // то же для границы воды и суши — а также для берегов (песок, галька) и краёв рек
+            roundCoast: 1,         // 0..3: насколько сильно скругляется береговая линия (0 — берег идёт по границам клеток)
             peakSharpness: 0.75,   // 0..1: острота гор (0 — округлые холмы-«губка», 1 — острые пики и гребни)
             mountainLift: 14,      // на сколько пикселей (для клетки 12×12) самые высокие горы поднимаются вверх, к северу
             hillStrength: 0.6,     // 0..1: заметность холмов и впадин на равнинах (0 — выключить)
@@ -53,7 +54,6 @@ export class MapPainter {
             settlementMinHouses: 1, // домиков в самом маленьком поселении
             settlementMaxHouses: 3, // домиков в клетке высшего уровня (если они помещаются)
             settlementOverflow: 0.25, // на сколько (доля клетки) основание дома может выйти за границу своей клетки
-            roundCoast: 1,         // сколько раз скруглять выпуклые прямые углы берега (0 — не скруглять)
             spriteOutline: false,  // тёмный контур вокруг построек, руд и эфира (в стиле dark fantasy выключен)
             grade: true,           // в тёмном стиле: цветокоррекция, туман, виньетка
             vignette: 0.35,        // затемнение к краям карты в тёмном стиле (0 — нет)
@@ -95,7 +95,8 @@ export class MapPainter {
 
         const terrain = view === 'terrain';
         this.paintBase();
-        this.roundCoastCorners();
+        this.smoothCoast();
+        this.decorateWaterMask();
         if (terrain) {
             this.relief = this.buildReliefHeights();
             this.reliefHeight = this.relief.height;

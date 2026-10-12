@@ -11,6 +11,7 @@ import { describeRegion, describeStats, describeTile } from './ui/describe.js';
 const generator = new MapGenerator({
     size: 150,
     // shapeVariety: 1,       // 0..1: изрезанность континента (заливы, полуострова)
+    // coastDetail: 0.2,      // 0..1: мелкая изрезанность береговой линии (0 — гладкие берега)
     // islandDensity: 0.8,    // 0..1: больше островов
     // inlandSeaStrength: 0.5,// внутренние моря
     // aridity: 0.1,          // меньше степей и пустынь
@@ -19,9 +20,19 @@ const generator = new MapGenerator({
     // riverCount: 30,
     // regionMinSize: 5,
     // regionMaxSize: 8,
+    // --- зоны ---
+    // steppeShare: 0.1,      // 0..1: доля карты под степями (0 — только обычные сухие места)
+    // deadLandShare: 0.08,   // 0..1: доля карты под мёртвыми землями
+    // etherLandShare: 0.06,  // 0..1: доля карты под землями эфира
+    // etherLandDensity: 0.7, // 0..1: плотность эфира внутри эфирных земель
+    // --- поселения и поля ---
+    // settlementsPerRegionMax: 3,  // максимум групп поселений в одном регионе
+    // wheatMinPerRegion: 2,        // минимум полей в каждом подходящем регионе
 });
 
-const renderer = new MapRenderer(document.getElementById('map'), generator);
+const renderer = new MapRenderer(document.getElementById('map'), generator, {
+    // roundCoast: 2,        // 0..3: уровень скругления береговой линии (0 — берег по границам клеток, больше — плавнее)
+});
 const info = document.getElementById('info');
 const selectionPanel = document.getElementById('selection');
 const seedInput = document.getElementById('seed');
