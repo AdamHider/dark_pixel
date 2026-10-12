@@ -173,7 +173,7 @@ export const settlements = {
 
         const street = new Map();
         const [[ax, ay], [bx, by]] = layout.street;
-        const width = Math.max(1, this.px(2));
+        const width = this.pxMin(2);
         for (const [px, py] of this.linePoints(Math.round(ax), Math.round(ay), Math.round(bx), Math.round(by))) {
             for (let oy = 0; oy < width; oy++) {
                 for (let ox = 0; ox < width; ox++) {

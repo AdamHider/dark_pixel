@@ -3385,7 +3385,7 @@
         uy = fx / flen;
       }
       const water = (px, py) => px >= 0 && py >= 0 && px < W && py < W && !!(mask && mask[py * W + px] > 0);
-      const bank = Math.max(1, this.px(2));
+      const bank = this.pxMin(2);
       const maxReach = Math.max(T * 2, this.px(48));
       const march = (sign) => {
         let waterIn = -1;
@@ -3444,7 +3444,7 @@
   // src/render/painter/layers/roads.js
   var roads2 = {
     roadWidth(level) {
-      return Math.max(1, this.px([2, 3, 4][Math.min(3, Math.max(1, level)) - 1]));
+      return this.pxMin([2, 3, 4][Math.min(3, Math.max(1, level)) - 1]);
     },
     /* Дороги строит генератор (map.roadLinks: из каждой клетки — в какие из 8 сторон идёт дорога, map.roadLevel — насколько
        она наезжена). Здесь каждый отрезок между центрами соседних клеток рисуется слегка извилистой полосой:
@@ -3737,7 +3737,7 @@
       }
       const street = /* @__PURE__ */ new Map();
       const [[ax, ay], [bx, by]] = layout.street;
-      const width = Math.max(1, this.px(2));
+      const width = this.pxMin(2);
       for (const [px, py] of this.linePoints(Math.round(ax), Math.round(ay), Math.round(bx), Math.round(by))) {
         for (let oy = 0; oy < width; oy++) {
           for (let ox = 0; ox < width; ox++) {
@@ -3863,7 +3863,7 @@
       const pixels = this.pixels;
       const waterMask = this.waterMask;
       const c = this.colors;
-      const wet = Math.max(1, this.px(2));
+      const wet = this.pxMin(2);
       const reach = Math.max(3, Math.ceil(wet + this.tileSize / this.options.coastSharpness));
       const distance = new Uint8Array(W * W);
       const kind = new Uint8Array(W * W);

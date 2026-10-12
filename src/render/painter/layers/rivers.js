@@ -253,7 +253,7 @@ export const rivers = {
         if (flen > 0) { ux = -fy / flen; uy = fx / flen; }
 
         const water = (px, py) => px >= 0 && py >= 0 && px < W && py < W && !!(mask && mask[py * W + px] > 0);
-        const bank = Math.max(1, this.px(2));                 // насколько мост заходит на берег
+        const bank = this.pxMin(2);                 // насколько мост заходит на берег
         const maxReach = Math.max(T * 2, this.px(48));        // широкие устья/озёра: идём до настоящего берега
 
         // 3) Шагаем от центра клетки вдоль оси моста; возвращаем расстояние до дальнего берега.
