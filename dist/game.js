@@ -140,7 +140,7 @@
     // --- зоны (степи, мёртвые земли, земли эфира) ---
     zoneScale: 4,
     // масштаб крупных «пятен» зон (больше — мельче и чаще пятна)
-    steppeShare: 0,
+    steppeShare: 0.07,
     // доля карты под дополнительными степями (0 — степи только в обычных сухих местах)
     deadLandShare: 0.05,
     // доля карты под мёртвыми землями
@@ -2219,12 +2219,16 @@
       return true;
     },
     /* Сглаживание берега.
-       Маска «суша/вода» размывается на уровне клеток, поэтому линия берега перестаёт идти по границам клеток:
-       выпуклые прямые углы скругляются, а между береговыми клетками появляются плавные заливы и мысы.
-       Размытое поле интерполируется по пикселям, и берег проводится по его середине — с узкой дизеринг-каймой
-       для мягкой кромки. */
+       Маска «суша/вода» размывается на уровне клеток (число проходов размытия задаёт options.roundCoast),
+       поэтому линия берега перестаёт идти по границам клеток: выпуклые прямые углы скругляются, а между
+       береговыми клетками появляются плавные заливы и мысы. Размытое поле интерполируется по пикселям, и берег
+       проводится по его середине.
+       Центр каждой клетки всегда сохраняет свой тип (ядро), поэтому клетка-суша не может целиком «уйти в воду»,
+       и при наведении на неё по-прежнему определяется равнина. */
     smoothCoast() {
-      if (this.view !== "terrain" || !this.map.landTiles || this.options.coastSmoothing === false) return;
+      if (this.view !== "terrain" || !this.map.landTiles) return;
+      const field = this.coastField();
+      if (!field) return;
       const map = this.map;
       const size = map.size;
       const T = this.tileSize;
@@ -2235,27 +2239,6 @@
       const { first, second, fraction } = axis;
       const colors = this.tileColors, tileWater = this.tileWater;
       if (!colors) return;
-      let field = new Float32Array(size * size);
-      for (let i = 0; i < field.length; i++) field[i] = tileWater[i] ? 1 : 0;
-      const blur = (source) => {
-        const out = new Float32Array(source.length);
-        for (let y = 0; y < size; y++) {
-          for (let x = 0; x < size; x++) {
-            let sum = 0, count = 0;
-            for (let dy = -1; dy <= 1; dy++) {
-              for (let dx = -1; dx <= 1; dx++) {
-                const nx = x + dx, ny = y + dy;
-                if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
-                sum += source[ny * size + nx];
-                count++;
-              }
-            }
-            out[y * size + x] = sum / count;
-          }
-        }
-        return out;
-      };
-      field = blur(blur(field));
       const waterColorOf = /* @__PURE__ */ new Map(), landColorOf = /* @__PURE__ */ new Map();
       const nearestColor = (tile, cache, wantLand) => {
         if (cache.has(tile)) return cache.get(tile);
@@ -2282,11 +2265,13 @@
         return color;
       };
       const shallow = this.packed.waterShades[0];
+      const halfT = T / 2;
       for (let ty = 0; ty < size; ty++) {
         for (let tx = 0; tx < size; tx++) {
           const baseWater = tileWater[ty * size + tx] ? 1 : 0;
           const tile = ty * size + tx;
           const x0 = tx * T, y0 = ty * T;
+          const coreX = x0 + (T >> 1), coreY = y0 + (T >> 1);
           for (let gy = y0; gy < y0 + T; gy++) {
             const r0 = first[gy] * size, r1 = second[gy] * size, v = fraction[gy];
             for (let gx = x0; gx < x0 + T; gx++) {
@@ -2295,7 +2280,8 @@
               const c = field[r1 + first[gx]], d = field[r1 + second[gx]];
               const topRow = a + (b - a) * u;
               const fv = topRow + (c + (d - c) * u - topRow) * v;
-              const newWater = fv > 0.5 ? 1 : 0;
+              const bias = (baseWater - 0.5) * this.coastCore(Math.abs(gx - coreX) / halfT, Math.abs(gy - coreY) / halfT);
+              const newWater = fv + bias > 0.5 ? 1 : 0;
               if (newWater === baseWater) continue;
               const k = gy * W + gx;
               if (newWater) {
@@ -2309,6 +2295,160 @@
           }
         }
       }
+    },
+    // Насколько пиксель «принадлежит ядру» своей клетки: 1 в центре, 0 у края. Держит центр клетки её типа.
+    coastCore(dx, dy) {
+      const r = Math.min(1, Math.max(dx, dy));
+      return 1 - smoothstep(clamp((r - 0.35) / 0.65));
+    },
+    /* После скругления берега появились «лишние» пиксели воды на клетках-суше (и наоборот). Достраиваем их:
+       вода на суше становится землёй (цвет ближайшей суши), суша в воде — мелководьем. Так маска воды везде
+       совпадает с картинкой, а клетка на берегу больше не «двулична». */
+    decorateWaterMask() {
+      if (this.view !== "terrain" || !this.tileColors) return;
+      const map = this.map;
+      const size = map.size;
+      const T = this.tileSize;
+      const W = this.width;
+      const pixels = this.pixels;
+      const water = this.waterMask;
+      const colors = this.tileColors, tileWater = this.tileWater;
+      const field = this.coastField();
+      if (!field) return;
+      const axis = this.axis;
+      const { first, second, fraction } = axis;
+      const halfT = T / 2;
+      const waterColorOf = /* @__PURE__ */ new Map(), landColorOf = /* @__PURE__ */ new Map();
+      const nearestColor = (tile, cache, wantLand) => {
+        if (cache.has(tile)) return cache.get(tile);
+        let color = colors[tile];
+        const x = tile % size, y = Math.floor(tile / size);
+        for (let radius = 1; radius <= 3; radius++) {
+          let found = -1;
+          for (let dy = -radius; dy <= radius && found < 0; dy++) {
+            for (let dx = -radius; dx <= radius; dx++) {
+              const nx = x + dx, ny = y + dy;
+              if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+              if ((tileWater[ny * size + nx] ? false : true) === wantLand) {
+                found = ny * size + nx;
+                break;
+              }
+            }
+          }
+          if (found >= 0) {
+            color = colors[found];
+            break;
+          }
+        }
+        cache.set(tile, color);
+        return color;
+      };
+      for (let ty = 0; ty < size; ty++) {
+        for (let tx = 0; tx < size; tx++) {
+          const tile = ty * size + tx;
+          if (!tileWater[tile]) continue;
+          const x0 = tx * T, y0 = ty * T;
+          const coreX = x0 + (T >> 1), coreY = y0 + (T >> 1);
+          for (let gy = y0; gy < y0 + T; gy++) {
+            const r0 = first[gy] * size, r1 = second[gy] * size, v = fraction[gy];
+            for (let gx = x0; gx < x0 + T; gx++) {
+              const k = gy * W + gx;
+              if (!water[k]) continue;
+              const u = fraction[gx];
+              const a = field[r0 + first[gx]], b = field[r0 + second[gx]];
+              const c = field[r1 + first[gx]], d = field[r1 + second[gx]];
+              const topRow = a + (b - a) * u;
+              const fv = topRow + (c + (d - c) * u - topRow) * v;
+              const bias = 0.5 * this.coastCore(Math.abs(gx - coreX) / halfT, Math.abs(gy - coreY) / halfT);
+              if (fv + bias >= 0.5) continue;
+              pixels[k] = nearestColor(tile, landColorOf, true);
+              water[k] = 0;
+            }
+          }
+        }
+      }
+      const shallowColor = this.packed.waterShades[0];
+      for (let ty = 0; ty < size; ty++) {
+        for (let tx = 0; tx < size; tx++) {
+          const tile = ty * size + tx;
+          const wantWater = tileWater[tile] ? 1 : 0;
+          const x0 = tx * T, y0 = ty * T;
+          const coreX = x0 + (T >> 1), coreY = y0 + (T >> 1);
+          let wet = 0;
+          for (let gy = y0; gy < y0 + T; gy++) {
+            for (let gx = x0; gx < x0 + T; gx++) if (water[gy * W + gx]) wet++;
+          }
+          const half = T * T >> 1;
+          if (wantWater ? wet >= half : wet <= half) continue;
+          const far = [];
+          for (let gy = y0; gy < y0 + T; gy++) {
+            for (let gx = x0; gx < x0 + T; gx++) {
+              const k = gy * W + gx;
+              if (wantWater ? !water[k] : water[k]) {
+                const dx = Math.abs(gx - coreX) / halfT, dy = Math.abs(gy - coreY) / halfT;
+                far.push([Math.max(dx, dy), k]);
+              }
+            }
+          }
+          far.sort((p, q) => q[0] - p[0]);
+          for (const [, k] of far) {
+            if (wantWater ? wet >= half : wet <= half) break;
+            if (wantWater) {
+              pixels[k] = mixPacked(nearestColor(tile, waterColorOf, false), shallowColor, 0.6);
+              water[k] = 1;
+              wet++;
+            } else {
+              pixels[k] = nearestColor(tile, landColorOf, true);
+              water[k] = 0;
+              wet--;
+            }
+          }
+        }
+      }
+    },
+    // Размытое поле «воды» на уровне клеток (1 — вода, 0 — суша). Число проходов размытия — это и есть уровень скругления.
+    coastField() {
+      const passes = this.options.coastSmoothing === false ? 0 : Math.max(0, Math.round(this.options.roundCoast ?? 1));
+      if (passes <= 0 || !this.tileWater) return null;
+      if (this.coastFieldCache && this.coastFieldCache.passes === passes && this.coastFieldCache.source === this.tileWater) {
+        return this.coastFieldCache.field;
+      }
+      const size = this.map.size;
+      let field = new Float32Array(size * size);
+      for (let i = 0; i < field.length; i++) field[i] = this.tileWater[i] ? 1 : 0;
+      for (let p = 0; p < passes; p++) field = this.blurField(field, size);
+      this.coastFieldCache = { passes, source: this.tileWater, field };
+      return field;
+    },
+    // Размытие 3×3 (раздельное по осям, чтобы было дешевле).
+    blurField(src, size) {
+      const tmp = new Float32Array(src.length);
+      const out = new Float32Array(src.length);
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          let sum = 0, count = 0;
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx;
+            if (nx < 0 || nx >= size) continue;
+            sum += src[y * size + nx];
+            count++;
+          }
+          tmp[y * size + x] = sum / count;
+        }
+      }
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          let sum = 0, count = 0;
+          for (let dy = -1; dy <= 1; dy++) {
+            const ny = y + dy;
+            if (ny < 0 || ny >= size) continue;
+            sum += tmp[ny * size + x];
+            count++;
+          }
+          out[y * size + x] = sum / count;
+        }
+      }
+      return out;
     }
   };
 
@@ -3242,7 +3382,8 @@
       }
     },
     // Переправа: каменный мост (река глубже 1) или брод из камней (ручей). Рисуется поперёк течения.
-    // Длину и центр берём по настоящим пикселям реки в клетке, поэтому мост всегда лежит от берега до берега.
+    // Русло ищем в окрестности клетки (а не только в ней самой): у широких рек берега лежат в соседних клетках,
+    // поэтому мост должен идти от настоящего берега до настоящего берега, а не висеть посреди воды.
     paintCrossing(x, y, i) {
       const map = this.map;
       const T = this.tileSize;
@@ -3252,48 +3393,62 @@
       const to = map.riverTo[i];
       const flowX = to === -1 ? 0 : to % map.size - x;
       const flowY = to === -1 ? 0 : Math.floor(to / map.size) - y;
-      const horizontalFlow = to === -1 ? x > 0 && x < map.size - 1 && map.river[i - 1] > 0 && map.river[i + 1] > 0 : Math.abs(flowX) >= Math.abs(flowY);
       const left = x * T, top = y * T;
-      let minAcross = Infinity, maxAcross = -Infinity, sumAlong = 0, count = 0;
+      const middle = Math.floor(T / 2);
+      const bank = Math.max(1, this.px(2));
+      const maxReach = Math.max(T * 2, this.px(48));
+      const riverRun = (horizontal) => {
+        const alongCenter2 = (horizontal ? left : top) + middle;
+        const acrossCenter = (horizontal ? top : left) + middle;
+        const at = (b) => {
+          const ax = horizontal ? alongCenter2 : b;
+          const ay = horizontal ? b : alongCenter2;
+          if (ax < 0 || ay < 0 || ax >= W || ay >= W) return false;
+          return !!(mask && mask[ay * W + ax]);
+        };
+        if (!at(acrossCenter)) return null;
+        let lo = acrossCenter, hi = acrossCenter;
+        while (lo > acrossCenter - maxReach && at(lo - 1)) lo--;
+        while (hi < acrossCenter + maxReach && at(hi + 1)) hi++;
+        return { lo, hi };
+      };
+      let horizontalFlow = to === -1 ? x > 0 && x < map.size - 1 && map.river[i - 1] > 0 && map.river[i + 1] > 0 : Math.abs(flowX) >= Math.abs(flowY);
+      let run = mask ? riverRun(horizontalFlow) : null;
       if (mask) {
-        for (let gy = top; gy < top + T; gy++) {
-          for (let gx = left; gx < left + T; gx++) {
-            if (!mask[gy * W + gx]) continue;
-            const along = horizontalFlow ? gx : gy;
-            const across = horizontalFlow ? gy : gx;
-            if (across < minAcross) minAcross = across;
-            if (across > maxAcross) maxAcross = across;
-            sumAlong += along;
-            count++;
-          }
+        const alt = riverRun(!horizontalFlow);
+        const curSpan = run ? run.hi - run.lo : Infinity;
+        const altSpan = alt ? alt.hi - alt.lo : Infinity;
+        if (altSpan < curSpan) {
+          horizontalFlow = !horizontalFlow;
+          run = alt;
         }
       }
-      const middle = Math.floor(T / 2);
-      if (count === 0) {
-        const center = (horizontalFlow ? top : left) + middle;
-        minAcross = center - this.riverWidthAt(i) / 2;
-        maxAcross = center + this.riverWidthAt(i) / 2;
-        sumAlong = (horizontalFlow ? left : top) + middle;
-        count = 1;
+      let acrossFrom, acrossTo;
+      if (run) {
+        acrossFrom = run.lo - bank;
+        acrossTo = run.hi + bank;
+      } else {
+        const acrossCenter = (horizontalFlow ? top : left) + middle;
+        acrossFrom = acrossCenter - Math.round(this.riverWidthAt(i) / 2) - bank;
+        acrossTo = acrossCenter + Math.round(this.riverWidthAt(i) / 2) + bank;
       }
-      const put = (a, b, w, h, color) => horizontalFlow ? this.rect(a, b, w, h, color) : this.rect(b, a, h, w, color);
-      const bank = Math.max(1, this.px(2));
-      const centerAlong = Math.round(sumAlong / count);
-      const acrossFrom = Math.round(minAcross) - bank;
-      const acrossTo = Math.round(maxAcross) + bank;
+      acrossFrom = Math.max(0, acrossFrom);
+      acrossTo = Math.min(W - 1, acrossTo);
       const span = acrossTo - acrossFrom + 1;
+      const alongCenter = (horizontalFlow ? left : top) + middle;
+      const put = (a, b, w, h, color) => horizontalFlow ? this.rect(a, b, w, h, color) : this.rect(b, a, h, w, color);
       if (map.crossing[i] === 2) {
         const thickness = this.px(5);
-        const a0 = centerAlong - (thickness >> 1);
+        const a0 = alongCenter - (thickness >> 1);
         put(a0, acrossFrom, thickness, span, c.bridgeDeck);
         put(a0, acrossFrom, 1, span, c.bridgeEdge);
         put(a0 + thickness - 1, acrossFrom, 1, span, c.bridgeEdge);
       } else {
-        const stones = Math.max(2, Math.min(5, Math.round(span / this.px(3))));
+        const stones = Math.max(2, Math.min(6, Math.round(span / this.px(3))));
         for (let k = 0; k < stones; k++) {
           const b = acrossFrom + Math.round(k * (span - 2) / (stones - 1));
-          put(centerAlong - 1, b, 2, 2, c.stone);
-          put(centerAlong, b + 1, 1, 1, c.stoneShadow);
+          put(alongCenter - 1, b, 2, 2, c.stone);
+          put(alongCenter, b + 1, 1, 1, c.stoneShadow);
         }
       }
     }
@@ -3524,7 +3679,9 @@
         const chapel = k === 0 && level === maxLevel && isCenter && count >= 3;
         const kind = chapel ? "tower" : level === 1 && rnd(30 + k) < 0.4 ? "hut" : "house";
         const size = chapel ? [n(4), n(5), n(5)] : kind === "hut" ? [Math.max(2, w - 1), Math.max(2, bodyH - 1), Math.max(2, roofH - 1)] : [w, bodyH, roofH];
-        const jitterX = Math.round((rnd(40 + k) - 0.5) * n(2)), jitterY = Math.round(rnd(50 + k) - 0.5);
+        const stagger = (k & 1 ? 1 : -1) * n(1);
+        const jitterX = Math.round((rnd(40 + k) - 0.5) * n(5)) + stagger;
+        const jitterY = Math.round((rnd(50 + k) - 0.5) * n(4)) + stagger;
         for (const [nx, ny] of nudges) {
           if (tryPlace(left + fx * T + jitterX + nx * n(1), top + fy * T + jitterY + ny * n(1), ...size, kind)) return;
         }
@@ -3733,6 +3890,7 @@
         return n;
       };
       const tileOf = (k) => Math.floor(k / W / T) * size + Math.floor(k % W / T);
+      const typeAt = (gx, gy) => this.shoreTypeAt(gx, gy);
       for (let ty = 0; ty < size; ty++) {
         for (let tx = 0; tx < size; tx++) {
           const i = ty * size + tx;
@@ -3745,7 +3903,7 @@
               const touchesWater = gx > 0 && waterMask[k - 1] || gx < W - 1 && waterMask[k + 1] || gy > 0 && waterMask[k - W] || gy < W - 1 && waterMask[k + W];
               if (touchesWater) {
                 distance[k] = 1;
-                kind[k] = type;
+                kind[k] = typeAt(gx, gy);
                 queue.push(k);
               }
             }
@@ -3760,7 +3918,7 @@
           const next = around[a];
           if (waterMask[next] || distance[next]) continue;
           distance[next] = distance[k] + 1;
-          kind[next] = kind[k];
+          kind[next] = typeAt(next % W, (next - next % W) / W);
           queue.push(next);
         }
       }
@@ -3822,6 +3980,43 @@
       }
       this.paintCliffs();
     },
+    /* Тип берега в пикселе: поле «воды», размытое на уровне клеток (как при скруглении берега), даёт долю воды
+       в округе; где воды больше — ближе к берегу. Так границы пляж/галька/утёс идут вдоль скруглённой линии
+       берега, а не по границам клеток. */
+    shoreTypeAt(gx, gy) {
+      const map = this.map;
+      const size = map.size;
+      const T = this.tileSize;
+      const field = this.coastField();
+      if (!field) return map.shore[Math.floor(gy / T) * size + Math.floor(gx / T)];
+      const axis = this.axis;
+      const { first, second, fraction } = axis;
+      const u = fraction[gx], v = fraction[gy];
+      const a = field[first[gy] * size + first[gx]], b = field[first[gy] * size + second[gx]];
+      const c = field[second[gy] * size + first[gx]], d = field[second[gy] * size + second[gx]];
+      const topRow = a + (b - a) * u;
+      const fv = topRow + (c + (d - c) * u - topRow) * v;
+      const cx = Math.floor(gx / T), cy = Math.floor(gy / T);
+      let beach = 0, rocky = 0, cliff = 0, sum = 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const tx = cx + dx, ty = cy + dy;
+          if (tx < 0 || ty < 0 || tx >= size || ty >= size) continue;
+          const type = map.shore[ty * size + tx];
+          if (!type) continue;
+          const weight = Math.exp(-(dx * dx + dy * dy) / 3) * fv;
+          if (type === Shore.CLIFF) cliff += weight;
+          else if (type === Shore.ROCKY) rocky += weight;
+          else beach += weight;
+          sum += weight;
+        }
+      }
+      if (sum <= 0) return Shore.ROCKY;
+      if (cliff > sum * 0.5) return Shore.CLIFF;
+      if (rocky > sum * 0.5) return Shore.ROCKY;
+      if (beach > sum * 0.4) return Shore.BEACH;
+      return cliff >= rocky && cliff >= beach ? Shore.CLIFF : rocky >= beach ? Shore.ROCKY : Shore.BEACH;
+    },
     // Утёсы: суша «приподнята» — под её южным краем стенка из камня, под ней тень на воде.
     paintCliffs() {
       const map = this.map;
@@ -3841,6 +4036,7 @@
             for (let gx = tx * T; gx < (tx + 1) * T; gx++) {
               const k = gy * W + gx;
               if (waterMask[k]) continue;
+              if (this.shoreTypeAt(gx, gy) !== Shore.CLIFF) continue;
               if (k + W < W * W && waterMask[k + W]) {
                 pixels[k] = shadePacked(pixels[k], 0.12);
                 for (let f = 1; f <= faceHeight; f++) {
@@ -4213,6 +4409,8 @@
         // насколько резко смешиваются соседние биомы (больше — резче, 1 — очень мягко)
         coastSharpness: 1.5,
         // то же для границы воды и суши — а также для берегов (песок, галька) и краёв рек
+        roundCoast: 1,
+        // 0..3: насколько сильно скругляется береговая линия (0 — берег идёт по границам клеток)
         peakSharpness: 0.75,
         // 0..1: острота гор (0 — округлые холмы-«губка», 1 — острые пики и гребни)
         mountainLift: 14,
@@ -4277,6 +4475,7 @@
       const terrain2 = view === "terrain";
       this.paintBase();
       this.smoothCoast();
+      this.decorateWaterMask();
       if (terrain2) {
         this.relief = this.buildReliefHeights();
         this.reliefHeight = this.relief.height;
@@ -5113,6 +5312,7 @@
   var generator = new MapGenerator({
     size: 150
     // shapeVariety: 1,       // 0..1: изрезанность континента (заливы, полуострова)
+    // coastDetail: 0.2,      // 0..1: мелкая изрезанность береговой линии (0 — гладкие берега)
     // islandDensity: 0.8,    // 0..1: больше островов
     // inlandSeaStrength: 0.5,// внутренние моря
     // aridity: 0.1,          // меньше степей и пустынь
@@ -5121,8 +5321,18 @@
     // riverCount: 30,
     // regionMinSize: 5,
     // regionMaxSize: 8,
+    // --- зоны ---
+    // steppeShare: 0.1,      // 0..1: доля карты под степями (0 — только обычные сухие места)
+    // deadLandShare: 0.08,   // 0..1: доля карты под мёртвыми землями
+    // etherLandShare: 0.06,  // 0..1: доля карты под землями эфира
+    // etherLandDensity: 0.7, // 0..1: плотность эфира внутри эфирных земель
+    // --- поселения и поля ---
+    // settlementsPerRegionMax: 3,  // максимум групп поселений в одном регионе
+    // wheatMinPerRegion: 2,        // минимум полей в каждом подходящем регионе
   });
-  var renderer = new MapRenderer(document.getElementById("map"), generator);
+  var renderer = new MapRenderer(document.getElementById("map"), generator, {
+    // roundCoast: 2,        // 0..3: уровень скругления береговой линии (0 — берег по границам клеток, больше — плавнее)
+  });
   var info = document.getElementById("info");
   var selectionPanel = document.getElementById("selection");
   var seedInput = document.getElementById("seed");

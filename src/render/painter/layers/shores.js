@@ -36,6 +36,7 @@ export const shores = {
             return n;
         };
         const tileOf = k => Math.floor(k / W / T) * size + Math.floor((k % W) / T);
+        const typeAt = (gx, gy) => this.shoreTypeAt(gx, gy);
 
         // 1) семена: пиксели суши прямо у воды в клетках с берегом
         for (let ty = 0; ty < size; ty++) {
@@ -52,7 +53,7 @@ export const shores = {
                             || (gy > 0 && waterMask[k - W]) || (gy < W - 1 && waterMask[k + W]);
                         if (touchesWater) {
                             distance[k] = 1;
-                            kind[k] = type;
+                            kind[k] = typeAt(gx, gy);       // тип берём из сглаженного поля, а не из клетки — иначе границы пляж/галька квадратные
                             queue.push(k);
                         }
                     }
@@ -69,7 +70,7 @@ export const shores = {
                 const next = around[a];
                 if (waterMask[next] || distance[next]) continue;
                 distance[next] = distance[k] + 1;
-                kind[next] = kind[k];
+                kind[next] = typeAt(next % W, (next - next % W) / W);
                 queue.push(next);
             }
         }
@@ -137,6 +138,47 @@ export const shores = {
         this.paintCliffs();
     },
 
+    /* Тип берега в пикселе: поле «воды», размытое на уровне клеток (как при скруглении берега), даёт долю воды
+       в округе; где воды больше — ближе к берегу. Так границы пляж/галька/утёс идут вдоль скруглённой линии
+       берега, а не по границам клеток. */
+    shoreTypeAt(gx, gy) {
+        const map = this.map;
+        const size = map.size;
+        const T = this.tileSize;
+        const field = this.coastField();
+        if (!field) return map.shore[Math.floor(gy / T) * size + Math.floor(gx / T)];
+
+        const axis = this.axis;
+        const { first, second, fraction } = axis;
+        const u = fraction[gx], v = fraction[gy];
+        const a = field[first[gy] * size + first[gx]], b = field[first[gy] * size + second[gx]];
+        const c = field[second[gy] * size + first[gx]], d = field[second[gy] * size + second[gx]];
+        const topRow = a + (b - a) * u;
+        const fv = topRow + (c + (d - c) * u - topRow) * v;
+
+        // Клетки в округе: их близость к берегу и «вес» берега (утёс важнее гальки, галька важнее пляжа).
+        const cx = Math.floor(gx / T), cy = Math.floor(gy / T);
+        let beach = 0, rocky = 0, cliff = 0, sum = 0;
+        for (let dy = -2; dy <= 2; dy++) {
+            for (let dx = -2; dx <= 2; dx++) {
+                const tx = cx + dx, ty = cy + dy;
+                if (tx < 0 || ty < 0 || tx >= size || ty >= size) continue;
+                const type = map.shore[ty * size + tx];
+                if (!type) continue;
+                const weight = Math.exp(-(dx * dx + dy * dy) / 3) * fv;   // ближе к берегу и ближе к пикселю — сильнее
+                if (type === Shore.CLIFF) cliff += weight;
+                else if (type === Shore.ROCKY) rocky += weight;
+                else beach += weight;
+                sum += weight;
+            }
+        }
+        if (sum <= 0) return Shore.ROCKY;
+        if (cliff > sum * 0.5) return Shore.CLIFF;
+        if (rocky > sum * 0.5) return Shore.ROCKY;
+        if (beach > sum * 0.4) return Shore.BEACH;
+        return cliff >= rocky && cliff >= beach ? Shore.CLIFF : rocky >= beach ? Shore.ROCKY : Shore.BEACH;
+    },
+
     // Утёсы: суша «приподнята» — под её южным краем стенка из камня, под ней тень на воде.
     paintCliffs() {
         const map = this.map;
@@ -158,6 +200,7 @@ export const shores = {
                     for (let gx = tx * T; gx < (tx + 1) * T; gx++) {
                         const k = gy * W + gx;
                         if (waterMask[k]) continue;
+                        if (this.shoreTypeAt(gx, gy) !== Shore.CLIFF) continue;   // край обрыва идёт вдоль скруглённого берега
 
                         if (k + W < W * W && waterMask[k + W]) {                 // вода под краем: виден обрыв
                             pixels[k] = shadePacked(pixels[k], 0.12);             // светлая кромка

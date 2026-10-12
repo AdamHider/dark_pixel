@@ -30,7 +30,9 @@ const generator = new MapGenerator({
     // wheatMinPerRegion: 2,        // минимум полей в каждом подходящем регионе
 });
 
-const renderer = new MapRenderer(document.getElementById('map'), generator);
+const renderer = new MapRenderer(document.getElementById('map'), generator, {
+    // roundCoast: 2,        // 0..3: уровень скругления береговой линии (0 — берег по границам клеток, больше — плавнее)
+});
 const info = document.getElementById('info');
 const selectionPanel = document.getElementById('selection');
 const seedInput = document.getElementById('seed');

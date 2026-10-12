@@ -218,7 +218,8 @@ export const rivers = {
     },
 
     // Переправа: каменный мост (река глубже 1) или брод из камней (ручей). Рисуется поперёк течения.
-    // Длину и центр берём по настоящим пикселям реки в клетке, поэтому мост всегда лежит от берега до берега.
+    // Русло ищем в окрестности клетки (а не только в ней самой): у широких рек берега лежат в соседних клетках,
+    // поэтому мост должен идти от настоящего берега до настоящего берега, а не висеть посреди воды.
     paintCrossing(x, y, i) {
         const map = this.map;
         const T = this.tileSize;
@@ -228,57 +229,73 @@ export const rivers = {
         const to = map.riverTo[i];
         const flowX = to === -1 ? 0 : (to % map.size) - x;
         const flowY = to === -1 ? 0 : Math.floor(to / map.size) - y;
-        const horizontalFlow = to === -1
+
+        const left = x * T, top = y * T;
+        const middle = Math.floor(T / 2);
+
+        // Границы русла: идём поперёк течения от центра клетки в обе стороны, пока не кончится вода реки.
+        const bank = Math.max(1, this.px(2));
+        const maxReach = Math.max(T * 2, this.px(48));      // даже очень широкие устья/озёра: идём до настоящего берега
+        const riverRun = horizontal => {
+            const alongCenter = (horizontal ? left : top) + middle;
+            const acrossCenter = (horizontal ? top : left) + middle;
+            const at = b => {
+                const ax = horizontal ? alongCenter : b;
+                const ay = horizontal ? b : alongCenter;
+                if (ax < 0 || ay < 0 || ax >= W || ay >= W) return false;
+                return !!(mask && mask[ay * W + ax]);
+            };
+            if (!at(acrossCenter)) return null;
+            let lo = acrossCenter, hi = acrossCenter;
+            while (lo > acrossCenter - maxReach && at(lo - 1)) lo--;
+            while (hi < acrossCenter + maxReach && at(hi + 1)) hi++;
+            return { lo, hi };
+        };
+
+        let horizontalFlow = to === -1
             ? x > 0 && x < map.size - 1 && map.river[i - 1] > 0 && map.river[i + 1] > 0
             : Math.abs(flowX) >= Math.abs(flowY);
-
-        // Границы русла в клетке: «вдоль» течения и «поперёк».
-        const left = x * T, top = y * T;
-        let minAcross = Infinity, maxAcross = -Infinity, sumAlong = 0, count = 0;
+        let run = mask ? riverRun(horizontalFlow) : null;
+        // Выбираем ориентацию, при которой поперёк течения река самая узкая: у широких устьев верный выбор
+        // не даёт мосту «висеть» вдоль воды. Если маски нет — доверяем направлению течения.
         if (mask) {
-            for (let gy = top; gy < top + T; gy++) {
-                for (let gx = left; gx < left + T; gx++) {
-                    if (!mask[gy * W + gx]) continue;
-                    const along = horizontalFlow ? gx : gy;
-                    const across = horizontalFlow ? gy : gx;
-                    if (across < minAcross) minAcross = across;
-                    if (across > maxAcross) maxAcross = across;
-                    sumAlong += along;
-                    count++;
-                }
-            }
+            const alt = riverRun(!horizontalFlow);
+            const curSpan = run ? run.hi - run.lo : Infinity;
+            const altSpan = alt ? alt.hi - alt.lo : Infinity;
+            if (altSpan < curSpan) { horizontalFlow = !horizontalFlow; run = alt; }
         }
-        const middle = Math.floor(T / 2);
-        if (count === 0) {                                   // маски нет — считаем по ширине реки
-            const center = (horizontalFlow ? top : left) + middle;
-            minAcross = center - this.riverWidthAt(i) / 2;
-            maxAcross = center + this.riverWidthAt(i) / 2;
-            sumAlong = (horizontalFlow ? left : top) + middle;
-            count = 1;
+
+        let acrossFrom, acrossTo;
+        if (run) {
+            acrossFrom = run.lo - bank;
+            acrossTo = run.hi + bank;
+        } else {
+            const acrossCenter = (horizontalFlow ? top : left) + middle;
+            acrossFrom = acrossCenter - Math.round(this.riverWidthAt(i) / 2) - bank;
+            acrossTo = acrossCenter + Math.round(this.riverWidthAt(i) / 2) + bank;
         }
+        acrossFrom = Math.max(0, acrossFrom);
+        acrossTo = Math.min(W - 1, acrossTo);
+        const span = acrossTo - acrossFrom + 1;
+        const alongCenter = (horizontalFlow ? left : top) + middle;
 
         // Работаем в координатах «вдоль течения» (a) и «поперёк течения» (b), затем переводим в x, y.
         const put = (a, b, w, h, color) => (horizontalFlow
             ? this.rect(a, b, w, h, color)
             : this.rect(b, a, h, w, color));
-        const bank = Math.max(1, this.px(2));                 // насколько мост заходит на берег
-        const centerAlong = Math.round(sumAlong / count);
-        const acrossFrom = Math.round(minAcross) - bank;
-        const acrossTo = Math.round(maxAcross) + bank;
-        const span = acrossTo - acrossFrom + 1;
 
         if (map.crossing[i] === 2) {
             const thickness = this.px(5);
-            const a0 = centerAlong - (thickness >> 1);
+            const a0 = alongCenter - (thickness >> 1);
             put(a0, acrossFrom, thickness, span, c.bridgeDeck);
             put(a0, acrossFrom, 1, span, c.bridgeEdge);
             put(a0 + thickness - 1, acrossFrom, 1, span, c.bridgeEdge);
         } else {
-            const stones = Math.max(2, Math.min(5, Math.round(span / this.px(3))));
+            const stones = Math.max(2, Math.min(6, Math.round(span / this.px(3))));
             for (let k = 0; k < stones; k++) {
                 const b = acrossFrom + Math.round(k * (span - 2) / (stones - 1));
-                put(centerAlong - 1, b, 2, 2, c.stone);
-                put(centerAlong, b + 1, 1, 1, c.stoneShadow);
+                put(alongCenter - 1, b, 2, 2, c.stone);
+                put(alongCenter, b + 1, 1, 1, c.stoneShadow);
             }
         }
     },

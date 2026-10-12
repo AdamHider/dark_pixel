@@ -42,6 +42,7 @@ export class MapPainter {
             tileSize: 12,
             blendSharpness: 1.5,   // насколько резко смешиваются соседние биомы (больше — резче, 1 — очень мягко)
             coastSharpness: 1.5,   // то же для границы воды и суши — а также для берегов (песок, галька) и краёв рек
+            roundCoast: 1,         // 0..3: насколько сильно скругляется береговая линия (0 — берег идёт по границам клеток)
             peakSharpness: 0.75,   // 0..1: острота гор (0 — округлые холмы-«губка», 1 — острые пики и гребни)
             mountainLift: 14,      // на сколько пикселей (для клетки 12×12) самые высокие горы поднимаются вверх, к северу
             hillStrength: 0.6,     // 0..1: заметность холмов и впадин на равнинах (0 — выключить)
@@ -95,6 +96,7 @@ export class MapPainter {
         const terrain = view === 'terrain';
         this.paintBase();
         this.smoothCoast();
+        this.decorateWaterMask();
         if (terrain) {
             this.relief = this.buildReliefHeights();
             this.reliefHeight = this.relief.height;
