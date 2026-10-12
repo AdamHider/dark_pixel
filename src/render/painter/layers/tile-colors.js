@@ -18,6 +18,17 @@ export const tileColors = {
         return { colors, water };
     },
 
+    // Цвет фракции — по её культуре (см. src/game/cultures.js). Если культур нет, берём старую палитру.
+    factionColor(factionId) {
+        if (factionId === undefined || factionId < 0) return this.colors.factionNeutral;
+        const faction = this.map.factions && this.map.factions[factionId];
+        if (faction && faction.culture !== undefined && this.cultureColors) {
+            return this.cultureColors[faction.culture % this.cultureColors.length];
+        }
+        const palette = this.colors.factionColors;
+        return palette[factionId % palette.length];
+    },
+
     tileColor(i) {
         const map = this.map;
         const terrain = map.terrain[i];
@@ -30,7 +41,17 @@ export const tileColors = {
         if (isWater) return this.waterColor(i);
         if (this.view === 'factions') {
             const f = this.map.factionId ? this.map.factionId[i] : -1;
-            if (f >= 0) return this.colors.factionColors[f % this.colors.factionColors.length];
+            if (f >= 0) return this.factionColor(f);
+        }
+        if (this.view === 'diplomacy' && !isWater) {
+            const f = this.map.factionId ? this.map.factionId[i] : -1;
+            if (f >= 0) {
+                if (f === this.viewerFaction) return this.factionColor(f);
+                const level = this.relations ? this.relations.get(this.relationKey(f, this.viewerFaction)) : 'neutral';
+                if (level === 'war') return this.colors.factionWar;
+                if (level === 'ally') return this.colors.factionAlly;
+                return this.colors.factionNeutral;
+            }
         }
         if (this.view === 'regions') return hslToPacked((map.regionId[i] * 137.5) % 360, 45, 58); // «золотой угол»: соседи разного цвета
         if (terrain === Terrain.MOUNTAIN) return this.packed.rock; // под рельефом — камень

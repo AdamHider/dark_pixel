@@ -14,6 +14,12 @@ export const COLORS = {
     regionBorder: '#19110a',
     factionBorder: '#0c0906',                 // тёмная обводка границы фракции
     factionColors: ['#c0503a', '#3d6ea8', '#4f8f52', '#b08a2e', '#7a4f9c', '#2f8f8f'], // цвет каждой фракции по кругу
+    factionWar: '#c0392b',                    // цвет границы: фракции воюют
+    factionAlly: '#4f8f52',                   // цвет границы: фракции в союзе
+    factionNeutral: '#cbb98f',                // цвет границы: нейтралитет
+    armyBase: '#1b140d',                      // основание маркера армии
+    armyReach: 'rgba(255, 226, 122, 0.20)',   // заливка достижимых клеток
+    armyZoc: 'rgba(192, 57, 43, 0.55)',       // контур зоны контроля
     sand: '#dccb96',
     wetSand: '#b5a67c',
     pebbleLight: '#a9a59a',

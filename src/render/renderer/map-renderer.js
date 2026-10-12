@@ -1,6 +1,7 @@
 import { SpriteRenderer } from '../../sprites/sprite-renderer.js';
 import { MapPainter } from '../painter/map-painter.js';
 import { SEASONS } from '../seasons.js';
+import { armies } from './armies.js';
 import { camera } from './camera.js';
 import { input } from './input.js';
 import { objects } from './objects.js';
@@ -40,6 +41,10 @@ export class MapRenderer {
         this.camera = { x: 0, y: 0, zoom: 1 };
         this.sprites = new SpriteRenderer();
         this.objects = [];         // объекты на карте: города, армии... (см. setObjects)
+        this.armies = [];          // армии игрока и соперников (см. setArmies)
+        this.armySelection = null; // выбранная армия для показа достижимой зоны
+        this.relations = null;     // Map «ключ пары -> 'war'|'neutral'|'ally'» для цвета границ
+        this.viewerFaction = 0;    // чья карта в режиме «Политика»
         this.onObjectClick = null; // функция (object) => void — клик по объекту
         this.selection = null;     // { tile, region, edges } — выделенная клетка и её регион
         this.onSelect = null;      // функция (tileInfo, regionInfo) => void
@@ -104,9 +109,49 @@ export class MapRenderer {
     rebuildBuffer() {
         this.buffer = this.painter.paint({
             view: this.view, seasonName: this.seasonName,
-            showBorders: this.showBorders, showFactions: this.showFactions, mood: this.mood
+            showBorders: this.showBorders, showFactions: this.showFactions, mood: this.mood,
+            relations: this.relations, viewerFaction: this.viewerFaction
         });
     }
+
+    // Чья карта в режиме «Политика» (индекс фракции игрока).
+    setViewerFaction(factionId) {
+        this.viewerFaction = factionId | 0;
+        this.rebuildBuffer();
+        this.draw();
+    }
+
+    // Уровни дип. отношений (Map «ключ пары -> 'war'|'neutral'|'ally'») — ими красится граница фракций.
+    setRelations(relations) {
+        this.relations = relations || null;
+        this.rebuildBuffer();
+        this.draw();
+    }
+
+    // Мини-копия карты (data URL) — для превью в панели дипломатии.
+    thumbnail(maxSize = 220) {
+        if (!this.buffer || this.buffer.width === 0) return '';
+        const side = Math.max(32, Math.round(maxSize));
+        const canvas = document.createElement('canvas');
+        canvas.width = side;
+        canvas.height = side;
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(this.buffer, 0, 0, this.buffer.width, this.buffer.height, 0, 0, side, side);
+        return canvas.toDataURL('image/png');
+    }
+
+    /* ---------- Армии ---------- */
+
+    // Список армий для слоя армий (слой берёт tile, faction, strength, moves).
+    setArmies(armies) {
+        this.armies = armies || [];
+        this.draw();
+    }
+
+    // Колбэки слоя армий: клик и наведение (см. src/render/renderer/armies.js).
+    onArmyClick = null;
+    onArmyHover = null;
 
     /* ---------- Камера ---------- */
 
@@ -148,8 +193,9 @@ export class MapRenderer {
             (srcRight - srcX) * camera.zoom, (srcBottom - srcY) * camera.zoom
         );
         this.drawSelection();
+        this.drawArmies();
         this.drawObjects();
     }
 }
 
-Object.assign(MapRenderer.prototype, objects, camera, selection, input);
+Object.assign(MapRenderer.prototype, objects, armies, camera, selection, input);

@@ -196,6 +196,7 @@ export class MapGenerator {
         const regionId = this.regionId[i];
         return {
             x, y,
+            index: i,
             terrain: this.terrain[i],
             biome: this.biome[i],
             temperature: this.temperature[i],

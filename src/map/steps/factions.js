@@ -6,6 +6,8 @@
    фракция — так фракции выходят примерно равными по размеру. Острова, не связанные с материком, после этого
    отходят ближайшей по расположению фракции. */
 
+import { CULTURES } from '../../game/cultures.js';
+
 export const factions = {
     buildFactions() {
         const o = this.options;
@@ -22,12 +24,26 @@ export const factions = {
 
         const seeds = this.pickFactionSeeds(mainland, neighbors, Math.min(count, mainland.length));
         this.growFactions(mainland, neighbors, seeds);
-        this.factions = seeds.map((_, id) => ({ id, name: this.factionName(id), regions: [], tiles: 0, population: 0 }));
+        this.factions = seeds.map((_, id) => ({
+            id,
+            name: this.factionName(id),
+            culture: this.factionCulture(id),
+            regions: [],
+            tiles: 0,
+            population: 0
+        }));
         this.collectFactionRegions(regionIds);
         this.assignIslandsByProximity(regionIds);
 
         // Итоги по фракциям (для интерфейса): сколько клеток, регионов и населения.
         this.countFactionSizes();
+    },
+
+    // Культура фракции: сдвиг от id, чтобы раскладка культур была неочевидной, но воспроизводимой.
+    factionCulture(id) {
+        const count = CULTURES.length || 1;
+        const shift = (this.options.cultureOffset | 0) || 0;
+        return (id + shift) % count;
     },
 
     // Записывает, какие регионы уже принадлежат каждой фракции (по массиву regionFaction).

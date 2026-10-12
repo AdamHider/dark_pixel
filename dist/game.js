@@ -264,8 +264,10 @@
     factionCount: 2,
     // сколько фракций на карте (1..N); 0 — фракций нет
     factionNames: ["\u0418\u043C\u043F\u0435\u0440\u0438\u044F \u041E\u0433\u043D\u044F", "\u0421\u0435\u0432\u0435\u0440\u043D\u044B\u0439 \u0414\u043E\u0433\u043E\u0432\u043E\u0440", "\u042D\u0444\u0438\u0440\u043D\u044B\u0439 \u041A\u043E\u0432\u0435\u043D", "\u041F\u0443\u0441\u0442\u044B\u043D\u043D\u044B\u0439 \u0425\u0430\u043B\u0438\u0444\u0430\u0442"],
-    factionColorShift: 0
+    factionColorShift: 0,
     // 0..1: насколько «дрожит» граница фракций (0 — ровная линия по клеткам)
+    cultureOffset: 0
+    // с какой культуры начинать раздачу (см. src/game/cultures.js)
   });
 
   // src/map/steps/climate.js
@@ -388,6 +390,37 @@
     }
   };
 
+  // src/game/cultures.js
+  var CULTURE_NAMES = Object.freeze(["\u0421\u0438\u043D\u044F\u044F", "\u0427\u0451\u0440\u043D\u0430\u044F", "\u0417\u0435\u043B\u0451\u043D\u0430\u044F", "\u041A\u0440\u0430\u0441\u043D\u0430\u044F", "\u0411\u0435\u043B\u0430\u044F", "\u0416\u0451\u043B\u0442\u0430\u044F", "\u0424\u0438\u043E\u043B\u0435\u0442\u043E\u0432\u0430\u044F"]);
+  var CULTURE_COLORS = Object.freeze([
+    "#3d6ea8",
+    // синяя
+    "#2b2b33",
+    // чёрная
+    "#4f8f52",
+    // зелёная
+    "#c0503a",
+    // красная
+    "#d9d2c0",
+    // белая
+    "#c8a53a",
+    // жёлтая
+    "#7a4f9c"
+    // фиолетовая
+  ]);
+  var CULTURES = Object.freeze(CULTURE_NAMES.map((name, id) => Object.freeze({
+    id,
+    name,
+    color: CULTURE_COLORS[id],
+    aggression: [0.3, 0.8, 0.35, 1, 0.25, 0.45, 0.6][id],
+    trade: [0.7, 0.2, 0.6, 0.3, 0.8, 0.55, 0.4][id],
+    ether: [0.4, 0.5, 0.5, 0.3, 0.5, 0.4, 1][id]
+  })));
+  function cultureById(id) {
+    if (CULTURES.length === 0) return null;
+    return CULTURES[(id % CULTURES.length + CULTURES.length) % CULTURES.length];
+  }
+
   // src/map/steps/factions.js
   var factions = {
     buildFactions() {
@@ -402,10 +435,23 @@
       const mainland = this.largestRegionComponent(regionIds, neighbors);
       const seeds = this.pickFactionSeeds(mainland, neighbors, Math.min(count, mainland.length));
       this.growFactions(mainland, neighbors, seeds);
-      this.factions = seeds.map((_, id) => ({ id, name: this.factionName(id), regions: [], tiles: 0, population: 0 }));
+      this.factions = seeds.map((_, id) => ({
+        id,
+        name: this.factionName(id),
+        culture: this.factionCulture(id),
+        regions: [],
+        tiles: 0,
+        population: 0
+      }));
       this.collectFactionRegions(regionIds);
       this.assignIslandsByProximity(regionIds);
       this.countFactionSizes();
+    },
+    // Культура фракции: сдвиг от id, чтобы раскладка культур была неочевидной, но воспроизводимой.
+    factionCulture(id) {
+      const count = CULTURES.length || 1;
+      const shift = this.options.cultureOffset | 0 || 0;
+      return (id + shift) % count;
     },
     // Записывает, какие регионы уже принадлежат каждой фракции (по массиву regionFaction).
     collectFactionRegions(regionIds) {
@@ -877,11 +923,11 @@
         if (this.biome[i] === Biome.DEAD_LAND || this.biome[i] === Biome.ETHER_LAND) continue;
         const t = this.temperature[i];
         const m = this.moisture[i];
-        const roll = this.random();
+        const roll2 = this.random();
         const goodForWood = forest[i] && m > 0.3 && t > 0.12 && t < 0.8;
         const goodForWheat = fields[i] && m > 0.1 && m < 0.9 && t > 0.18 && t < 0.85;
-        if (goodForWood && roll < o.woodChance) this.resource[i] = Resource.WOOD;
-        else if (goodForWheat && roll < o.wheatChance) this.resource[i] = Resource.WHEAT;
+        if (goodForWood && roll2 < o.woodChance) this.resource[i] = Resource.WOOD;
+        else if (goodForWheat && roll2 < o.wheatChance) this.resource[i] = Resource.WHEAT;
       }
     },
     /* Поля раскладываем ещё и «по одному на регион» (после того как регионы построены): регионам, где пшеницы мало,
@@ -1716,6 +1762,7 @@
       return {
         x,
         y,
+        index: i,
         terrain: this.terrain[i],
         biome: this.biome[i],
         temperature: this.temperature[i],
@@ -2292,6 +2339,18 @@
     // тёмная обводка границы фракции
     factionColors: ["#c0503a", "#3d6ea8", "#4f8f52", "#b08a2e", "#7a4f9c", "#2f8f8f"],
     // цвет каждой фракции по кругу
+    factionWar: "#c0392b",
+    // цвет границы: фракции воюют
+    factionAlly: "#4f8f52",
+    // цвет границы: фракции в союзе
+    factionNeutral: "#cbb98f",
+    // цвет границы: нейтралитет
+    armyBase: "#1b140d",
+    // основание маркера армии
+    armyReach: "rgba(255, 226, 122, 0.20)",
+    // заливка достижимых клеток
+    armyZoc: "rgba(192, 57, 43, 0.55)",
+    // контур зоны контроля
     sand: "#dccb96",
     wetSand: "#b5a67c",
     pebbleLight: "#a9a59a",
@@ -2590,7 +2649,6 @@
       const T = this.tileSize;
       const W = this.width;
       const pixels = this.pixels;
-      const palette = this.colors.factionColors;
       const ink = this.colors.factionBorder;
       const radius = Math.max(2, this.px(5));
       for (let tile = 0; tile < size * size; tile++) {
@@ -2617,11 +2675,25 @@
             if (d >= radius || d <= 0) continue;
             const alpha = d / radius * 0.9;
             if (BAYER[(gy & 3) * 4 + (gx & 3)] >= alpha * 2) continue;
-            pixels[k] = mixPacked(pixels[k], ink, alpha * 0.5);
-            pixels[k] = mixPacked(pixels[k], palette[id % palette.length], alpha);
+            const status = this.diplomacyColor(id, edgeRight ? right : below) || ink;
+            pixels[k] = mixPacked(pixels[k], status, alpha * 0.75);
+            pixels[k] = mixPacked(pixels[k], this.factionColor(id), alpha * 0.85);
           }
         }
       }
+    },
+    // Ключ пары фракций, одинаковый при любом порядке (как в GameState.relationKey).
+    relationKey(a, b) {
+      return a < b ? `${a}|${b}` : `${b}|${a}`;
+    },
+    // Цвет дип. статуса пары фракций (или null, если отношение нейтрально).
+    diplomacyColor(a, b) {
+      if (!this.relations) return null;
+      const level = this.relations.get(this.relationKey(a, b));
+      if (level === "war") return this.colors.factionWar;
+      if (level === "ally") return this.colors.factionAlly;
+      if (level === "neutral") return this.colors.factionNeutral;
+      return null;
     }
   };
 
@@ -2974,19 +3046,19 @@
         const i = map.index(x, y);
         if (map.terrain[i] !== Terrain.PLAIN || map.river[i] || map.resource[i] !== Resource.NONE || map.roadLevel[i] > 0) return;
         if (map.shore[i] === Shore.BEACH) return;
-        const roll = hashUnit(x, y, 950 + this.seedSalt);
+        const roll2 = hashUnit(x, y, 950 + this.seedSalt);
         const cx = x * T + Math.round(hashUnit(x, y, 951) * (T - 2)) + 1;
         const base2 = y * T + Math.round(hashUnit(x, y, 952) * (T - 4)) + 3;
         const dry = [Biome.STEPPE, Biome.DESERT, Biome.TUNDRA, Biome.SAVANNA].includes(map.biome[i]);
         if (map.biome[i] === Biome.ETHER_LAND) {
-          if (roll < 0.06) items.push({ y: base2, x: cx, draw: () => this.drawShard(cx, base2) });
+          if (roll2 < 0.06) items.push({ y: base2, x: cx, draw: () => this.drawShard(cx, base2) });
         } else if (map.biome[i] === Biome.DEAD_LAND) {
-          if (roll < 0.05) items.push({ y: base2, x: cx, draw: () => this.drawBones(cx, base2) });
-          else if (roll < 0.09) items.push({ y: base2, x: cx, draw: () => this.drawCharredStump(cx, base2) });
-        } else if (dry && roll < 0.014) items.push({ y: base2, x: cx, draw: () => this.drawBones(cx, base2) });
-        else if (!dry && roll < 6e-3) items.push({ y: base2, x: cx, draw: () => this.drawCrow(cx, base2) });
-        else if (roll > 0.994 && roll <= 0.9985) items.push({ y: base2, x: cx, draw: () => this.drawRuin(cx, base2, x, y) });
-        else if (roll > 0.9985) items.push({ y: base2, x: cx, draw: () => this.drawGibbet(cx, base2) });
+          if (roll2 < 0.05) items.push({ y: base2, x: cx, draw: () => this.drawBones(cx, base2) });
+          else if (roll2 < 0.09) items.push({ y: base2, x: cx, draw: () => this.drawCharredStump(cx, base2) });
+        } else if (dry && roll2 < 0.014) items.push({ y: base2, x: cx, draw: () => this.drawBones(cx, base2) });
+        else if (!dry && roll2 < 6e-3) items.push({ y: base2, x: cx, draw: () => this.drawCrow(cx, base2) });
+        else if (roll2 > 0.994 && roll2 <= 0.9985) items.push({ y: base2, x: cx, draw: () => this.drawRuin(cx, base2, x, y) });
+        else if (roll2 > 0.9985) items.push({ y: base2, x: cx, draw: () => this.drawGibbet(cx, base2) });
       });
     },
     // Обугленный пень — мёртвое дерево, оставшееся после пожара или скверны.
@@ -3923,15 +3995,15 @@
       return this.mood === "dark" ? shadePacked(mixPacked(color, packRgb(128, 128, 128), 0.1), -0.06) : color;
     },
     // Рисунок здания (кэшируется): стены, крыша, дверь, контур.
-    houseSprite(part, roll, snow) {
+    houseSprite(part, roll2, snow) {
       if (!this.spriteCache) this.spriteCache = /* @__PURE__ */ new Map();
-      const key = [part.kind, part.w, part.bodyH, part.roofH, Math.floor(roll * 4), Math.round(snow * 3), this.mood, this.season.name].join("|");
+      const key = [part.kind, part.w, part.bodyH, part.roofH, Math.floor(roll2 * 4), Math.round(snow * 3), this.mood, this.season.name].join("|");
       const cached = this.spriteCache.get(key);
       if (cached) return cached;
       const c = this.colors;
       const tower = part.kind === "tower";
-      const wall = this.houseColor(tower ? c.chapelStone : [c.wallA, c.wallB][Math.floor(roll * 2) % 2]);
-      let roof = this.houseColor(part.kind === "hut" ? c.thatch : tower ? c.roofD : [c.roofA, c.roofB, c.roofC, c.roofD][Math.floor(roll * 4) % 4]);
+      const wall = this.houseColor(tower ? c.chapelStone : [c.wallA, c.wallB][Math.floor(roll2 * 2) % 2]);
+      let roof = this.houseColor(part.kind === "hut" ? c.thatch : tower ? c.roofD : [c.roofA, c.roofB, c.roofC, c.roofD][Math.floor(roll2 * 4) % 4]);
       if (snow > 0) roof = mixPacked(roof, this.packed.snow, 0.85 * snow);
       const pad = 1;
       const overhang = tower ? 0 : 1;
@@ -3967,7 +4039,7 @@
         anchorX: Math.round(centerX),
         anchorY: height - pad - 1,
         windows,
-        chimney: !tower && part.kind === "house" && roll > 0.4 ? [Math.round(centerX) + 1, pad - 1] : null
+        chimney: !tower && part.kind === "house" && roll2 > 0.4 ? [Math.round(centerX) + 1, pad - 1] : null
       };
       this.spriteCache.set(key, sprite);
       return sprite;
@@ -4322,6 +4394,16 @@
       }
       return { colors, water };
     },
+    // Цвет фракции — по её культуре (см. src/game/cultures.js). Если культур нет, берём старую палитру.
+    factionColor(factionId) {
+      if (factionId === void 0 || factionId < 0) return this.colors.factionNeutral;
+      const faction = this.map.factions && this.map.factions[factionId];
+      if (faction && faction.culture !== void 0 && this.cultureColors) {
+        return this.cultureColors[faction.culture % this.cultureColors.length];
+      }
+      const palette = this.colors.factionColors;
+      return palette[factionId % palette.length];
+    },
     tileColor(i) {
       const map = this.map;
       const terrain2 = map.terrain[i];
@@ -4333,7 +4415,17 @@
       if (isWater) return this.waterColor(i);
       if (this.view === "factions") {
         const f = this.map.factionId ? this.map.factionId[i] : -1;
-        if (f >= 0) return this.colors.factionColors[f % this.colors.factionColors.length];
+        if (f >= 0) return this.factionColor(f);
+      }
+      if (this.view === "diplomacy" && !isWater) {
+        const f = this.map.factionId ? this.map.factionId[i] : -1;
+        if (f >= 0) {
+          if (f === this.viewerFaction) return this.factionColor(f);
+          const level = this.relations ? this.relations.get(this.relationKey(f, this.viewerFaction)) : "neutral";
+          if (level === "war") return this.colors.factionWar;
+          if (level === "ally") return this.colors.factionAlly;
+          return this.colors.factionNeutral;
+        }
       }
       if (this.view === "regions") return hslToPacked(map.regionId[i] * 137.5 % 360, 45, 58);
       if (terrain2 === Terrain.MOUNTAIN) return this.packed.rock;
@@ -4581,11 +4673,16 @@
       for (const [name, hex] of Object.entries(COLORS)) {
         this.colors[name] = Array.isArray(hex) ? hex.map(hexToPacked) : hexToPacked(hex);
       }
+      this.cultureColors = CULTURE_COLORS.map(hexToPacked);
     }
     /* ---------- Главный метод ---------- */
     // view: 'terrain' | 'temperature' | 'regions'. Возвращает холст с готовой картой.
-    paint({ view, seasonName, showBorders, showFactions, mood }) {
+    // relations — Map «ключ пары фракций -> уровень отношений» ('war' | 'neutral' | 'ally'): им красится граница.
+    // viewerFaction — чья карта: в режиме «Политика» свои земли, союзники, враги и нейтралы красятся по-разному.
+    paint({ view, seasonName, showBorders, showFactions, mood, relations, viewerFaction }) {
       this.view = view;
+      this.relations = relations || null;
+      this.viewerFaction = viewerFaction | 0;
       this.mood = mood === "dark" ? "dark" : "light";
       this.season = (this.mood === "dark" ? DARK_SEASONS : SEASONS)[seasonName];
       this.pal = this.season.palette;
@@ -4680,433 +4777,6 @@
     }
   };
   Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers2, texture, grading, props, roads2, settlements2, minerals, borders, factions2, scene, vegetation);
-
-  // src/render/renderer/camera.js
-  var camera = {
-    // Показать всю карту целиком по центру.
-    fitToView() {
-      const zoom = Math.min(this.canvas.width, this.canvas.height) / this.worldSize;
-      this.camera.zoom = clamp(zoom, this.options.minZoom, this.options.maxZoom);
-      this.centerOn(this.worldSize / 2, this.worldSize / 2);
-    },
-    centerOn(worldX, worldY) {
-      this.camera.x = worldX - this.canvas.width / 2 / this.camera.zoom;
-      this.camera.y = worldY - this.canvas.height / 2 / this.camera.zoom;
-      this.clampCamera();
-      this.draw();
-    },
-    // Не даём камере улететь слишком далеко: за краем карты можно видеть не больше половины экрана.
-    clampCamera() {
-      const cam = this.camera;
-      const viewW = this.canvas.width / cam.zoom;
-      const viewH = this.canvas.height / cam.zoom;
-      cam.x = clamp(cam.x, -viewW / 2, this.worldSize - viewW / 2);
-      cam.y = clamp(cam.y, -viewH / 2, this.worldSize - viewH / 2);
-    },
-    // Сдвиг камеры на dx, dy экранных пикселей (карта «едет» вслед за пальцем/мышью).
-    panBy(dx, dy) {
-      this.camera.x -= dx / this.camera.zoom;
-      this.camera.y -= dy / this.camera.zoom;
-      this.clampCamera();
-      this.draw();
-    },
-    // Зум так, чтобы точка под курсором осталась на месте.
-    zoomAt(screenX, screenY, factor) {
-      const cam = this.camera;
-      const worldBefore = this.screenToWorld(screenX, screenY);
-      cam.zoom = clamp(cam.zoom * factor, this.options.minZoom, this.options.maxZoom);
-      cam.x = worldBefore.x - screenX / cam.zoom;
-      cam.y = worldBefore.y - screenY / cam.zoom;
-      this.clampCamera();
-      this.draw();
-    },
-    screenToWorld(screenX, screenY) {
-      return {
-        x: this.camera.x + screenX / this.camera.zoom,
-        y: this.camera.y + screenY / this.camera.zoom
-      };
-    },
-    screenToTile(screenX, screenY) {
-      const world = this.screenToWorld(screenX, screenY);
-      return {
-        x: Math.floor(world.x / this.options.tileSize),
-        y: Math.floor(world.y / this.options.tileSize)
-      };
-    }
-  };
-
-  // src/render/renderer/input.js
-  var input = {
-    bindEvents() {
-      const canvas = this.canvas;
-      canvas.addEventListener("pointerdown", (e) => {
-        this.dragging = true;
-        this.lastPointer = { x: e.clientX, y: e.clientY };
-        this.pressStart = { x: e.clientX, y: e.clientY };
-        canvas.setPointerCapture(e.pointerId);
-        canvas.classList.add("dragging");
-      });
-      canvas.addEventListener("pointermove", (e) => {
-        if (this.dragging) {
-          this.panBy(e.clientX - this.lastPointer.x, e.clientY - this.lastPointer.y);
-          this.lastPointer = { x: e.clientX, y: e.clientY };
-        } else {
-          this.reportHover(e);
-        }
-      });
-      const stopDragging = () => {
-        this.dragging = false;
-        canvas.classList.remove("dragging");
-      };
-      canvas.addEventListener("pointerup", (e) => {
-        const start = this.pressStart;
-        stopDragging();
-        if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) < 5) {
-          const point = this.pointerToCanvas(e);
-          const object = this.onObjectClick ? this.objectAt(point) : null;
-          if (object) this.onObjectClick(object);
-          else this.selectAt(point);
-        }
-      });
-      canvas.addEventListener("pointercancel", stopDragging);
-      canvas.addEventListener("pointerleave", () => this.onHover && this.onHover(null));
-      canvas.addEventListener("wheel", (e) => {
-        e.preventDefault();
-        const point = this.pointerToCanvas(e);
-        const factor = e.deltaY < 0 ? this.options.zoomStep : 1 / this.options.zoomStep;
-        this.zoomAt(point.x, point.y, factor);
-      }, { passive: false });
-      canvas.addEventListener("keydown", (e) => {
-        const step = this.options.keyPanStep;
-        const center = { x: canvas.width / 2, y: canvas.height / 2 };
-        const actions = {
-          ArrowLeft: () => this.panBy(step, 0),
-          a: () => this.panBy(step, 0),
-          ArrowRight: () => this.panBy(-step, 0),
-          d: () => this.panBy(-step, 0),
-          ArrowUp: () => this.panBy(0, step),
-          w: () => this.panBy(0, step),
-          ArrowDown: () => this.panBy(0, -step),
-          s: () => this.panBy(0, -step),
-          "+": () => this.zoomAt(center.x, center.y, this.options.zoomStep),
-          "=": () => this.zoomAt(center.x, center.y, this.options.zoomStep),
-          "-": () => this.zoomAt(center.x, center.y, 1 / this.options.zoomStep),
-          Escape: () => this.clearSelection()
-        };
-        const action = actions[e.key];
-        if (action) {
-          e.preventDefault();
-          action();
-        }
-      });
-    },
-    // Координаты курсора относительно холста (с учётом того, что CSS-размер может отличаться от размера холста).
-    pointerToCanvas(e) {
-      const rect = this.canvas.getBoundingClientRect();
-      return {
-        x: (e.clientX - rect.left) * (this.canvas.width / rect.width),
-        y: (e.clientY - rect.top) * (this.canvas.height / rect.height)
-      };
-    },
-    reportHover(e) {
-      if (!this.onHover) return;
-      const point = this.pointerToCanvas(e);
-      const tile = this.screenToTile(point.x, point.y);
-      this.onHover(this.map.getTileInfo(tile.x, tile.y));
-    }
-  };
-
-  // src/render/renderer/objects.js
-  var objects = {
-    /* Объект рисуется по конфигу функцией SpriteRenderer, поверх карты, на экране (а не в буфере карты),
-       поэтому армии можно двигать и менять без перерисовки всей карты.
-         { id: 'army-1',
-           config: SPRITE_EXAMPLES.army,         // описание объекта
-           tile: [x, y],                         // клетка карты (основание объекта — внизу клетки)
-           offset: [0, 0],                       // сдвиг в пикселях (для клетки 12×12), чтобы поставить точнее
-           options: { colors: { team: '#c33' }, flags: ['marching'], frame: 0, flipX: false } }
-       Сезон в options подставляется автоматически (текущий сезон карты), если вы не указали свой. */
-    setObjects(list) {
-      this.objects = list.slice();
-      this.draw();
-    },
-    addObject(object) {
-      this.objects = this.objects.filter((o) => o.id !== object.id).concat(object);
-      this.draw();
-    },
-    removeObject(id) {
-      this.objects = this.objects.filter((o) => o.id !== id);
-      this.draw();
-    },
-    // Где на экране стоит объект: левый верхний угол и размер спрайта.
-    objectBox(object) {
-      const unit = this.options.tileSize / 12;
-      const sprite = this.sprites.render(object.config, { season: this.seasonName, ...object.options });
-      const [tileX, tileY] = object.tile;
-      const [offsetX, offsetY] = object.offset || [0, 0];
-      const baseX = tileX * this.options.tileSize + this.options.tileSize / 2 + offsetX * unit;
-      const baseY = tileY * this.options.tileSize + this.options.tileSize * 0.85 + offsetY * unit;
-      const zoom = this.camera.zoom;
-      const factor = unit * zoom / sprite.scale;
-      return {
-        sprite,
-        baseY,
-        x: (baseX - this.camera.x) * zoom - sprite.anchorX * factor,
-        y: (baseY - this.camera.y) * zoom - sprite.anchorY * factor,
-        width: sprite.width * factor,
-        height: sprite.height * factor
-      };
-    },
-    drawObjects() {
-      if (this.objects.length === 0) return;
-      const { ctx, canvas } = this;
-      const boxes = this.objects.map((object) => ({ object, ...this.objectBox(object) }));
-      boxes.sort((a, b) => a.baseY - b.baseY);
-      ctx.save();
-      ctx.imageSmoothingEnabled = false;
-      for (const box of boxes) {
-        if (box.x > canvas.width || box.y > canvas.height || box.x + box.width < 0 || box.y + box.height < 0) continue;
-        ctx.drawImage(box.sprite.canvas, box.x, box.y, box.width, box.height);
-      }
-      ctx.restore();
-    },
-    // Объект под точкой экрана (самый южный из перекрывающихся) или null.
-    objectAt(point) {
-      const hit = this.objects.map((object) => ({ object, ...this.objectBox(object) })).filter((b) => point.x >= b.x && point.x <= b.x + b.width && point.y >= b.y && point.y <= b.y + b.height).sort((a, b) => b.baseY - a.baseY);
-      return hit.length ? hit[0].object : null;
-    }
-  };
-
-  // src/render/renderer/selection.js
-  var selection = {
-    // Клик выделяет клетку, а если это суша — ещё и весь её регион.
-    selectAt(point) {
-      const tile = this.screenToTile(point.x, point.y);
-      const info2 = this.map.getTileInfo(tile.x, tile.y);
-      if (!info2) {
-        this.clearSelection();
-        return;
-      }
-      const region = this.map.getRegionInfo(info2.regionId);
-      this.selection = { tile: info2, region, edges: region ? this.regionOutline(region) : [] };
-      this.draw();
-      if (this.onSelect) this.onSelect(info2, region);
-    },
-    clearSelection() {
-      if (!this.selection) return;
-      this.selection = null;
-      this.draw();
-      if (this.onSelect) this.onSelect(null, null);
-    },
-    // Внешняя граница региона: отрезок для каждой стороны клетки, за которой уже другой регион (координаты — в клетках).
-    regionOutline(region) {
-      const { size, regionId } = this.map;
-      const edges = [];
-      for (const i of region.tiles) {
-        const x = i % size;
-        const y = Math.floor(i / size);
-        if (x === 0 || regionId[i - 1] !== region.id) edges.push([x, y, x, y + 1]);
-        if (x === size - 1 || regionId[i + 1] !== region.id) edges.push([x + 1, y, x + 1, y + 1]);
-        if (y === 0 || regionId[i - size] !== region.id) edges.push([x, y, x + 1, y]);
-        if (y === size - 1 || regionId[i + size] !== region.id) edges.push([x, y + 1, x + 1, y + 1]);
-      }
-      return edges;
-    },
-    // Рисуется поверх карты на экране, а не в буфере: выделение можно менять без перерисовки всей карты.
-    drawSelection() {
-      if (!this.selection) return;
-      const { ctx, camera: camera2 } = this;
-      const tileSize = this.options.tileSize;
-      const size = this.map.size;
-      const cell = tileSize * camera2.zoom;
-      const screenX = (tileX) => (tileX * tileSize - camera2.x) * camera2.zoom;
-      const screenY = (tileY) => (tileY * tileSize - camera2.y) * camera2.zoom;
-      const { tile, region, edges } = this.selection;
-      ctx.save();
-      ctx.lineJoin = "round";
-      if (region) {
-        ctx.fillStyle = "rgba(255, 240, 170, 0.18)";
-        ctx.beginPath();
-        for (const i of region.tiles) ctx.rect(screenX(i % size), screenY(Math.floor(i / size)), cell, cell);
-        ctx.fill();
-        ctx.beginPath();
-        for (const [x1, y1, x2, y2] of edges) {
-          ctx.moveTo(screenX(x1), screenY(y1));
-          ctx.lineTo(screenX(x2), screenY(y2));
-        }
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
-        ctx.lineWidth = 5;
-        ctx.stroke();
-        ctx.strokeStyle = "#ffe27a";
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-      }
-      ctx.strokeStyle = "rgba(0, 0, 0, 0.6)";
-      ctx.lineWidth = 4;
-      ctx.strokeRect(screenX(tile.x), screenY(tile.y), cell, cell);
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(screenX(tile.x), screenY(tile.y), cell, cell);
-      ctx.restore();
-    }
-  };
-
-  // src/render/renderer/map-renderer.js
-  var MapRenderer = class {
-    constructor(canvas, map, options = {}) {
-      this.canvas = canvas;
-      this.ctx = canvas.getContext("2d");
-      this.map = map;
-      this.options = {
-        tileSize: 16,
-        // размер клетки в пикселях (в игре всегда 16)
-        minZoom: 0.1,
-        maxZoom: 6,
-        zoomStep: 1.15,
-        // во сколько раз меняется зум за один «щелчок» колеса
-        keyPanStep: 60,
-        // шаг движения камеры стрелками, в экранных пикселях
-        backgroundColor: "#0f1418",
-        mood: "dark",
-        // 'dark' (dark fantasy) | 'light'
-        ...options
-      };
-      this.painter = new MapPainter(map, this.options);
-      this.buffer = document.createElement("canvas");
-      this.view = "terrain";
-      this.seasonName = "summer";
-      this.mood = this.options.mood;
-      this.showBorders = true;
-      this.showFactions = true;
-      this.camera = { x: 0, y: 0, zoom: 1 };
-      this.sprites = new SpriteRenderer();
-      this.objects = [];
-      this.onObjectClick = null;
-      this.selection = null;
-      this.onSelect = null;
-      this.onHover = null;
-      this.dragging = false;
-      this.pressStart = null;
-      this.lastPointer = { x: 0, y: 0 };
-      this.bindEvents();
-      new ResizeObserver(() => this.resize()).observe(canvas);
-      this.resize();
-    }
-    /* ---------- Публичные методы ---------- */
-    // Вызывать после каждой новой генерации карты.
-    refresh() {
-      this.selection = null;
-      this.rebuildBuffer();
-      this.fitToView();
-    }
-    setView(view) {
-      this.view = view;
-      this.rebuildBuffer();
-      this.draw();
-    }
-    setSeason(name) {
-      if (!SEASONS[name]) return;
-      this.seasonName = name;
-      this.rebuildBuffer();
-      this.draw();
-    }
-    // 'dark' — dark fantasy (приглушённые цвета, туман, мёртвые деревья, мрачные детали); 'light' — обычный стиль.
-    setMood(mood) {
-      this.mood = mood;
-      this.rebuildBuffer();
-      this.draw();
-    }
-    setShowSettlements(show) {
-      this.painter.options.settlements = show;
-      this.rebuildBuffer();
-      this.draw();
-    }
-    setShowBorders(show) {
-      this.showBorders = show;
-      this.rebuildBuffer();
-      this.draw();
-    }
-    setShowFactions(show) {
-      this.showFactions = show;
-      this.rebuildBuffer();
-      this.draw();
-    }
-    rebuildBuffer() {
-      this.buffer = this.painter.paint({
-        view: this.view,
-        seasonName: this.seasonName,
-        showBorders: this.showBorders,
-        showFactions: this.showFactions,
-        mood: this.mood
-      });
-    }
-    /* ---------- Камера ---------- */
-    get worldSize() {
-      return this.map.size * this.options.tileSize;
-    }
-    /* ---------- Вывод на экран ---------- */
-    resize() {
-      this.canvas.width = this.canvas.clientWidth;
-      this.canvas.height = this.canvas.clientHeight;
-      this.clampCamera();
-      this.draw();
-    }
-    draw() {
-      const { ctx, canvas, camera: camera2 } = this;
-      ctx.fillStyle = this.options.backgroundColor;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      if (this.buffer.width === 0) return;
-      ctx.imageSmoothingEnabled = camera2.zoom < 1;
-      const viewW = canvas.width / camera2.zoom;
-      const viewH = canvas.height / camera2.zoom;
-      const srcX = Math.max(0, camera2.x);
-      const srcY = Math.max(0, camera2.y);
-      const srcRight = Math.min(this.worldSize, camera2.x + viewW);
-      const srcBottom = Math.min(this.worldSize, camera2.y + viewH);
-      if (srcRight <= srcX || srcBottom <= srcY) return;
-      ctx.drawImage(
-        this.buffer,
-        srcX,
-        srcY,
-        srcRight - srcX,
-        srcBottom - srcY,
-        (srcX - camera2.x) * camera2.zoom,
-        (srcY - camera2.y) * camera2.zoom,
-        (srcRight - srcX) * camera2.zoom,
-        (srcBottom - srcY) * camera2.zoom
-      );
-      this.drawSelection();
-      this.drawObjects();
-    }
-  };
-  Object.assign(MapRenderer.prototype, objects, camera, selection, input);
-
-  // src/ui/controls.js
-  function bindToggle(id, apply) {
-    const button = document.getElementById(id);
-    button.addEventListener("click", () => {
-      const on = button.getAttribute("aria-pressed") !== "true";
-      button.setAttribute("aria-pressed", on);
-      apply(on);
-    });
-  }
-  function bindChoiceGroup(name, apply) {
-    const buttons = document.querySelectorAll(`[data-${name}]`);
-    buttons.forEach((button) => {
-      button.addEventListener("click", () => {
-        buttons.forEach((other) => other.setAttribute("aria-pressed", other === button));
-        apply(button.dataset[name]);
-      });
-    });
-  }
-  function bindPanelToggles() {
-    document.querySelectorAll("[data-toggle-panel]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const panel = document.getElementById(button.dataset.togglePanel);
-        if (panel) panel.style.display = panel.style.display === "none" ? "flex" : "none";
-      });
-    });
-  }
 
   // src/sprites/sprite-examples.js
   var SPRITE_EXAMPLES = {
@@ -5402,6 +5072,913 @@
     }
   };
 
+  // src/render/renderer/armies.js
+  var armies = {
+    // Модель игры (GameState) — нужна, чтобы спросить reachableTiles/zoneOfControl. Можно не задавать.
+    setArmyModel(model) {
+      this.armyModel = model;
+    },
+    // Клик по маркеру армии: выделить её или, если она уже выбрана, попробовать переместить.
+    selectArmy(army) {
+      if (this.armySelection === army) return;
+      this.armySelection = army || null;
+      this.draw();
+      if (this.onArmySelectionChange) this.onArmySelectionChange(this.armySelection);
+    },
+    clearArmySelection() {
+      if (!this.armySelection) return;
+      this.armySelection = null;
+      this.draw();
+      if (this.onArmySelectionChange) this.onArmySelectionChange(null);
+    },
+    // Цвет фракции — по её культуре (см. src/game/cultures.js).
+    armyColor(factionId) {
+      const faction = this.map.factions && this.map.factions[factionId];
+      const culture = faction && faction.culture !== void 0 ? faction.culture : factionId;
+      return CULTURE_COLORS[(culture % CULTURE_COLORS.length + CULTURE_COLORS.length) % CULTURE_COLORS.length];
+    },
+    // Центр клетки армии в координатах экрана.
+    armyScreenPoint(army) {
+      const tileSize = this.options.tileSize;
+      const cx = (army.tile % this.map.size + 0.5) * tileSize;
+      const cy = (Math.floor(army.tile / this.map.size) + 0.5) * tileSize;
+      return {
+        x: (cx - this.camera.x) * this.camera.zoom,
+        y: (cy - this.camera.y) * this.camera.zoom
+      };
+    },
+    // Маркер под точкой экрана (или null).
+    armyAt(point) {
+      const hitRadius = Math.max(8, this.options.tileSize * this.camera.zoom * 0.6);
+      for (const army of this.armies) {
+        const center = this.armyScreenPoint(army);
+        if (Math.hypot(point.x - center.x, point.y - center.y) <= hitRadius) return army;
+      }
+      return null;
+    },
+    drawArmies() {
+      if (this.armies.length === 0) return;
+      const { ctx } = this;
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      this.drawArmyMoveArea();
+      for (const army of this.armies) this.drawArmyMarker(army);
+      ctx.restore();
+    },
+    // Зона, куда может дойти выбранная армия, и её зона контроля.
+    drawArmyMoveArea() {
+      const army = this.armySelection;
+      if (!army || !this.armyModel) return;
+      const { ctx } = this;
+      const tileSize = this.options.tileSize;
+      const size = this.map.size;
+      const cell = tileSize * this.camera.zoom;
+      const screenX = (tile) => (tile * tileSize - this.camera.x) * this.camera.zoom;
+      const reachable = this.armyModel.reachableTiles(army);
+      ctx.fillStyle = COLORS.armyReach;
+      for (const tile of reachable.keys()) {
+        ctx.fillRect(screenX(tile % size), screenX(Math.floor(tile / size)), cell, cell);
+      }
+      const zone = this.armyModel.zoneOfControl(army);
+      ctx.strokeStyle = COLORS.armyZoc;
+      ctx.lineWidth = Math.max(1, cell * 0.12);
+      for (const tile of zone) {
+        const x = tile % size, y = Math.floor(tile / size);
+        const left = screenX(x), top = screenX(y);
+        ctx.beginPath();
+        if (!zone.has(tile - 1) && x > 0) {
+          ctx.moveTo(left, top);
+          ctx.lineTo(left, top + cell);
+        }
+        if (!zone.has(tile + 1) && x < size - 1) {
+          ctx.moveTo(left + cell, top);
+          ctx.lineTo(left + cell, top + cell);
+        }
+        if (!zone.has(tile - size) && y > 0) {
+          ctx.moveTo(left, top);
+          ctx.lineTo(left + cell, top);
+        }
+        if (!zone.has(tile + size) && y < size - 1) {
+          ctx.moveTo(left, top + cell);
+          ctx.lineTo(left + cell, top + cell);
+        }
+        ctx.stroke();
+      }
+    },
+    // Маркер армии: спрайт из конфига (src/sprites/sprite-examples.js) в цвет культуры фракции.
+    drawArmyMarker(army) {
+      const { ctx } = this;
+      const unit = this.options.tileSize / 12;
+      const config = this.armyConfig || SPRITE_EXAMPLES.army;
+      const flagship = army === this.armySelection;
+      const sprite = this.sprites.render(config, {
+        season: this.seasonName,
+        colors: { team: this.armyColor(army.faction) },
+        flags: ["marching"]
+      });
+      const zoom = this.camera.zoom;
+      const [tileX, tileY] = [army.tile % this.map.size, Math.floor(army.tile / this.map.size)];
+      const baseX = tileX * this.options.tileSize + this.options.tileSize / 2;
+      const baseY = tileY * this.options.tileSize + this.options.tileSize * 0.9;
+      const factor = unit * zoom / sprite.scale;
+      const x = (baseX - this.camera.x) * zoom - sprite.anchorX * factor;
+      const y = (baseY - this.camera.y) * zoom - sprite.anchorY * factor;
+      if (flagship) {
+        const { x: cx, y: cy } = this.armyScreenPoint(army);
+        const radius = Math.max(8, this.options.tileSize * zoom * 0.5);
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255, 226, 122, 0.22)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255, 226, 122, 0.85)";
+        ctx.lineWidth = Math.max(1, zoom);
+        ctx.stroke();
+      }
+      ctx.drawImage(sprite.canvas, x, y, sprite.width * factor, sprite.height * factor);
+    }
+  };
+
+  // src/render/renderer/camera.js
+  var camera = {
+    // Показать всю карту целиком по центру.
+    fitToView() {
+      const zoom = Math.min(this.canvas.width, this.canvas.height) / this.worldSize;
+      this.camera.zoom = clamp(zoom, this.options.minZoom, this.options.maxZoom);
+      this.centerOn(this.worldSize / 2, this.worldSize / 2);
+    },
+    centerOn(worldX, worldY) {
+      this.camera.x = worldX - this.canvas.width / 2 / this.camera.zoom;
+      this.camera.y = worldY - this.canvas.height / 2 / this.camera.zoom;
+      this.clampCamera();
+      this.draw();
+    },
+    // Не даём камере улететь слишком далеко: за краем карты можно видеть не больше половины экрана.
+    clampCamera() {
+      const cam = this.camera;
+      const viewW = this.canvas.width / cam.zoom;
+      const viewH = this.canvas.height / cam.zoom;
+      cam.x = clamp(cam.x, -viewW / 2, this.worldSize - viewW / 2);
+      cam.y = clamp(cam.y, -viewH / 2, this.worldSize - viewH / 2);
+    },
+    // Сдвиг камеры на dx, dy экранных пикселей (карта «едет» вслед за пальцем/мышью).
+    panBy(dx, dy) {
+      this.camera.x -= dx / this.camera.zoom;
+      this.camera.y -= dy / this.camera.zoom;
+      this.clampCamera();
+      this.draw();
+    },
+    // Зум так, чтобы точка под курсором осталась на месте.
+    zoomAt(screenX, screenY, factor) {
+      const cam = this.camera;
+      const worldBefore = this.screenToWorld(screenX, screenY);
+      cam.zoom = clamp(cam.zoom * factor, this.options.minZoom, this.options.maxZoom);
+      cam.x = worldBefore.x - screenX / cam.zoom;
+      cam.y = worldBefore.y - screenY / cam.zoom;
+      this.clampCamera();
+      this.draw();
+    },
+    screenToWorld(screenX, screenY) {
+      return {
+        x: this.camera.x + screenX / this.camera.zoom,
+        y: this.camera.y + screenY / this.camera.zoom
+      };
+    },
+    screenToTile(screenX, screenY) {
+      const world = this.screenToWorld(screenX, screenY);
+      return {
+        x: Math.floor(world.x / this.options.tileSize),
+        y: Math.floor(world.y / this.options.tileSize)
+      };
+    }
+  };
+
+  // src/render/renderer/input.js
+  var input = {
+    bindEvents() {
+      const canvas = this.canvas;
+      canvas.addEventListener("pointerdown", (e) => {
+        this.dragging = true;
+        this.lastPointer = { x: e.clientX, y: e.clientY };
+        this.pressStart = { x: e.clientX, y: e.clientY };
+        canvas.setPointerCapture(e.pointerId);
+        canvas.classList.add("dragging");
+      });
+      canvas.addEventListener("pointermove", (e) => {
+        if (this.dragging) {
+          this.panBy(e.clientX - this.lastPointer.x, e.clientY - this.lastPointer.y);
+          this.lastPointer = { x: e.clientX, y: e.clientY };
+        } else {
+          this.reportHover(e);
+        }
+      });
+      const stopDragging = () => {
+        this.dragging = false;
+        canvas.classList.remove("dragging");
+      };
+      canvas.addEventListener("pointerup", (e) => {
+        const start = this.pressStart;
+        stopDragging();
+        if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) < 5) {
+          const point = this.pointerToCanvas(e);
+          const army = this.armyAt(point);
+          if (army) {
+            this.onArmyClick && this.onArmyClick(army);
+          } else {
+            const object = this.onObjectClick ? this.objectAt(point) : null;
+            if (object) this.onObjectClick(object);
+            else this.selectAt(point);
+          }
+        }
+      });
+      canvas.addEventListener("pointercancel", stopDragging);
+      canvas.addEventListener("pointerleave", () => this.onHover && this.onHover(null));
+      canvas.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        const point = this.pointerToCanvas(e);
+        const factor = e.deltaY < 0 ? this.options.zoomStep : 1 / this.options.zoomStep;
+        this.zoomAt(point.x, point.y, factor);
+      }, { passive: false });
+      canvas.addEventListener("keydown", (e) => {
+        const step = this.options.keyPanStep;
+        const center = { x: canvas.width / 2, y: canvas.height / 2 };
+        const actions = {
+          ArrowLeft: () => this.panBy(step, 0),
+          a: () => this.panBy(step, 0),
+          ArrowRight: () => this.panBy(-step, 0),
+          d: () => this.panBy(-step, 0),
+          ArrowUp: () => this.panBy(0, step),
+          w: () => this.panBy(0, step),
+          ArrowDown: () => this.panBy(0, -step),
+          s: () => this.panBy(0, -step),
+          "+": () => this.zoomAt(center.x, center.y, this.options.zoomStep),
+          "=": () => this.zoomAt(center.x, center.y, this.options.zoomStep),
+          "-": () => this.zoomAt(center.x, center.y, 1 / this.options.zoomStep),
+          Escape: () => this.clearSelection()
+        };
+        const action = actions[e.key];
+        if (action) {
+          e.preventDefault();
+          action();
+        }
+      });
+    },
+    // Координаты курсора относительно холста (с учётом того, что CSS-размер может отличаться от размера холста).
+    pointerToCanvas(e) {
+      const rect = this.canvas.getBoundingClientRect();
+      return {
+        x: (e.clientX - rect.left) * (this.canvas.width / rect.width),
+        y: (e.clientY - rect.top) * (this.canvas.height / rect.height)
+      };
+    },
+    reportHover(e) {
+      if (!this.onHover) return;
+      const point = this.pointerToCanvas(e);
+      const tile = this.screenToTile(point.x, point.y);
+      this.onHover(this.map.getTileInfo(tile.x, tile.y));
+    }
+  };
+
+  // src/render/renderer/objects.js
+  var objects = {
+    /* Объект рисуется по конфигу функцией SpriteRenderer, поверх карты, на экране (а не в буфере карты),
+       поэтому армии можно двигать и менять без перерисовки всей карты.
+         { id: 'army-1',
+           config: SPRITE_EXAMPLES.army,         // описание объекта
+           tile: [x, y],                         // клетка карты (основание объекта — внизу клетки)
+           offset: [0, 0],                       // сдвиг в пикселях (для клетки 12×12), чтобы поставить точнее
+           options: { colors: { team: '#c33' }, flags: ['marching'], frame: 0, flipX: false } }
+       Сезон в options подставляется автоматически (текущий сезон карты), если вы не указали свой. */
+    setObjects(list) {
+      this.objects = list.slice();
+      this.draw();
+    },
+    addObject(object) {
+      this.objects = this.objects.filter((o) => o.id !== object.id).concat(object);
+      this.draw();
+    },
+    removeObject(id) {
+      this.objects = this.objects.filter((o) => o.id !== id);
+      this.draw();
+    },
+    // Где на экране стоит объект: левый верхний угол и размер спрайта.
+    objectBox(object) {
+      const unit = this.options.tileSize / 12;
+      const sprite = this.sprites.render(object.config, { season: this.seasonName, ...object.options });
+      const [tileX, tileY] = object.tile;
+      const [offsetX, offsetY] = object.offset || [0, 0];
+      const baseX = tileX * this.options.tileSize + this.options.tileSize / 2 + offsetX * unit;
+      const baseY = tileY * this.options.tileSize + this.options.tileSize * 0.85 + offsetY * unit;
+      const zoom = this.camera.zoom;
+      const factor = unit * zoom / sprite.scale;
+      return {
+        sprite,
+        baseY,
+        x: (baseX - this.camera.x) * zoom - sprite.anchorX * factor,
+        y: (baseY - this.camera.y) * zoom - sprite.anchorY * factor,
+        width: sprite.width * factor,
+        height: sprite.height * factor
+      };
+    },
+    drawObjects() {
+      if (this.objects.length === 0) return;
+      const { ctx, canvas } = this;
+      const boxes = this.objects.map((object) => ({ object, ...this.objectBox(object) }));
+      boxes.sort((a, b) => a.baseY - b.baseY);
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      for (const box of boxes) {
+        if (box.x > canvas.width || box.y > canvas.height || box.x + box.width < 0 || box.y + box.height < 0) continue;
+        ctx.drawImage(box.sprite.canvas, box.x, box.y, box.width, box.height);
+      }
+      ctx.restore();
+    },
+    // Объект под точкой экрана (самый южный из перекрывающихся) или null.
+    objectAt(point) {
+      const hit = this.objects.map((object) => ({ object, ...this.objectBox(object) })).filter((b) => point.x >= b.x && point.x <= b.x + b.width && point.y >= b.y && point.y <= b.y + b.height).sort((a, b) => b.baseY - a.baseY);
+      return hit.length ? hit[0].object : null;
+    }
+  };
+
+  // src/render/renderer/selection.js
+  var selection = {
+    // Клик выделяет клетку, а если это суша — ещё и весь её регион.
+    selectAt(point) {
+      const tile = this.screenToTile(point.x, point.y);
+      const info2 = this.map.getTileInfo(tile.x, tile.y);
+      if (!info2) {
+        this.clearSelection();
+        return;
+      }
+      const region = this.map.getRegionInfo(info2.regionId);
+      this.selection = { tile: info2, region, edges: region ? this.regionOutline(region) : [] };
+      this.draw();
+      if (this.onSelect) this.onSelect(info2, region);
+    },
+    clearSelection() {
+      if (!this.selection) return;
+      this.selection = null;
+      this.draw();
+      if (this.onSelect) this.onSelect(null, null);
+    },
+    // Внешняя граница региона: отрезок для каждой стороны клетки, за которой уже другой регион (координаты — в клетках).
+    regionOutline(region) {
+      const { size, regionId } = this.map;
+      const edges = [];
+      for (const i of region.tiles) {
+        const x = i % size;
+        const y = Math.floor(i / size);
+        if (x === 0 || regionId[i - 1] !== region.id) edges.push([x, y, x, y + 1]);
+        if (x === size - 1 || regionId[i + 1] !== region.id) edges.push([x + 1, y, x + 1, y + 1]);
+        if (y === 0 || regionId[i - size] !== region.id) edges.push([x, y, x + 1, y]);
+        if (y === size - 1 || regionId[i + size] !== region.id) edges.push([x, y + 1, x + 1, y + 1]);
+      }
+      return edges;
+    },
+    // Рисуется поверх карты на экране, а не в буфере: выделение можно менять без перерисовки всей карты.
+    drawSelection() {
+      if (!this.selection) return;
+      const { ctx, camera: camera2 } = this;
+      const tileSize = this.options.tileSize;
+      const size = this.map.size;
+      const cell = tileSize * camera2.zoom;
+      const screenX = (tileX) => (tileX * tileSize - camera2.x) * camera2.zoom;
+      const screenY = (tileY) => (tileY * tileSize - camera2.y) * camera2.zoom;
+      const { tile, region, edges } = this.selection;
+      ctx.save();
+      ctx.lineJoin = "round";
+      if (region) {
+        ctx.fillStyle = "rgba(255, 240, 170, 0.18)";
+        ctx.beginPath();
+        for (const i of region.tiles) ctx.rect(screenX(i % size), screenY(Math.floor(i / size)), cell, cell);
+        ctx.fill();
+        ctx.beginPath();
+        for (const [x1, y1, x2, y2] of edges) {
+          ctx.moveTo(screenX(x1), screenY(y1));
+          ctx.lineTo(screenX(x2), screenY(y2));
+        }
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+        ctx.lineWidth = 5;
+        ctx.stroke();
+        ctx.strokeStyle = "#ffe27a";
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+      }
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.6)";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(screenX(tile.x), screenY(tile.y), cell, cell);
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(screenX(tile.x), screenY(tile.y), cell, cell);
+      ctx.restore();
+    }
+  };
+
+  // src/render/renderer/map-renderer.js
+  var MapRenderer = class {
+    constructor(canvas, map, options = {}) {
+      this.canvas = canvas;
+      this.ctx = canvas.getContext("2d");
+      this.map = map;
+      this.options = {
+        tileSize: 16,
+        // размер клетки в пикселях (в игре всегда 16)
+        minZoom: 0.1,
+        maxZoom: 6,
+        zoomStep: 1.15,
+        // во сколько раз меняется зум за один «щелчок» колеса
+        keyPanStep: 60,
+        // шаг движения камеры стрелками, в экранных пикселях
+        backgroundColor: "#0f1418",
+        mood: "dark",
+        // 'dark' (dark fantasy) | 'light'
+        ...options
+      };
+      this.painter = new MapPainter(map, this.options);
+      this.buffer = document.createElement("canvas");
+      this.view = "terrain";
+      this.seasonName = "summer";
+      this.mood = this.options.mood;
+      this.showBorders = true;
+      this.showFactions = true;
+      this.camera = { x: 0, y: 0, zoom: 1 };
+      this.sprites = new SpriteRenderer();
+      this.objects = [];
+      this.armies = [];
+      this.armySelection = null;
+      this.relations = null;
+      this.viewerFaction = 0;
+      this.onObjectClick = null;
+      this.selection = null;
+      this.onSelect = null;
+      this.onHover = null;
+      this.dragging = false;
+      this.pressStart = null;
+      this.lastPointer = { x: 0, y: 0 };
+      this.bindEvents();
+      new ResizeObserver(() => this.resize()).observe(canvas);
+      this.resize();
+    }
+    /* ---------- Публичные методы ---------- */
+    // Вызывать после каждой новой генерации карты.
+    refresh() {
+      this.selection = null;
+      this.rebuildBuffer();
+      this.fitToView();
+    }
+    setView(view) {
+      this.view = view;
+      this.rebuildBuffer();
+      this.draw();
+    }
+    setSeason(name) {
+      if (!SEASONS[name]) return;
+      this.seasonName = name;
+      this.rebuildBuffer();
+      this.draw();
+    }
+    // 'dark' — dark fantasy (приглушённые цвета, туман, мёртвые деревья, мрачные детали); 'light' — обычный стиль.
+    setMood(mood) {
+      this.mood = mood;
+      this.rebuildBuffer();
+      this.draw();
+    }
+    setShowSettlements(show) {
+      this.painter.options.settlements = show;
+      this.rebuildBuffer();
+      this.draw();
+    }
+    setShowBorders(show) {
+      this.showBorders = show;
+      this.rebuildBuffer();
+      this.draw();
+    }
+    setShowFactions(show) {
+      this.showFactions = show;
+      this.rebuildBuffer();
+      this.draw();
+    }
+    rebuildBuffer() {
+      this.buffer = this.painter.paint({
+        view: this.view,
+        seasonName: this.seasonName,
+        showBorders: this.showBorders,
+        showFactions: this.showFactions,
+        mood: this.mood,
+        relations: this.relations,
+        viewerFaction: this.viewerFaction
+      });
+    }
+    // Чья карта в режиме «Политика» (индекс фракции игрока).
+    setViewerFaction(factionId) {
+      this.viewerFaction = factionId | 0;
+      this.rebuildBuffer();
+      this.draw();
+    }
+    // Уровни дип. отношений (Map «ключ пары -> 'war'|'neutral'|'ally'») — ими красится граница фракций.
+    setRelations(relations) {
+      this.relations = relations || null;
+      this.rebuildBuffer();
+      this.draw();
+    }
+    // Мини-копия карты (data URL) — для превью в панели дипломатии.
+    thumbnail(maxSize = 220) {
+      if (!this.buffer || this.buffer.width === 0) return "";
+      const side = Math.max(32, Math.round(maxSize));
+      const canvas = document.createElement("canvas");
+      canvas.width = side;
+      canvas.height = side;
+      const ctx = canvas.getContext("2d");
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(this.buffer, 0, 0, this.buffer.width, this.buffer.height, 0, 0, side, side);
+      return canvas.toDataURL("image/png");
+    }
+    /* ---------- Армии ---------- */
+    // Список армий для слоя армий (слой берёт tile, faction, strength, moves).
+    setArmies(armies2) {
+      this.armies = armies2 || [];
+      this.draw();
+    }
+    // Колбэки слоя армий: клик и наведение (см. src/render/renderer/armies.js).
+    onArmyClick = null;
+    onArmyHover = null;
+    /* ---------- Камера ---------- */
+    get worldSize() {
+      return this.map.size * this.options.tileSize;
+    }
+    /* ---------- Вывод на экран ---------- */
+    resize() {
+      this.canvas.width = this.canvas.clientWidth;
+      this.canvas.height = this.canvas.clientHeight;
+      this.clampCamera();
+      this.draw();
+    }
+    draw() {
+      const { ctx, canvas, camera: camera2 } = this;
+      ctx.fillStyle = this.options.backgroundColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      if (this.buffer.width === 0) return;
+      ctx.imageSmoothingEnabled = camera2.zoom < 1;
+      const viewW = canvas.width / camera2.zoom;
+      const viewH = canvas.height / camera2.zoom;
+      const srcX = Math.max(0, camera2.x);
+      const srcY = Math.max(0, camera2.y);
+      const srcRight = Math.min(this.worldSize, camera2.x + viewW);
+      const srcBottom = Math.min(this.worldSize, camera2.y + viewH);
+      if (srcRight <= srcX || srcBottom <= srcY) return;
+      ctx.drawImage(
+        this.buffer,
+        srcX,
+        srcY,
+        srcRight - srcX,
+        srcBottom - srcY,
+        (srcX - camera2.x) * camera2.zoom,
+        (srcY - camera2.y) * camera2.zoom,
+        (srcRight - srcX) * camera2.zoom,
+        (srcBottom - srcY) * camera2.zoom
+      );
+      this.drawSelection();
+      this.drawArmies();
+      this.drawObjects();
+    }
+  };
+  Object.assign(MapRenderer.prototype, objects, armies, camera, selection, input);
+
+  // src/game/ai.js
+  function roll(seed, a, b, c) {
+    let h = seed * 374761393 + a * 668265263 + b * 2147483647 + c * 1274126177 | 0;
+    h = (h ^ h >>> 13) * 1274126177;
+    h = h ^ h >>> 16;
+    return (h >>> 0) % 1e5 / 1e5;
+  }
+  var AIController = class {
+    constructor(state) {
+      this.state = state;
+      this.seed = 1;
+    }
+    // Один ход для всех неигровых фракций.
+    takeTurn() {
+      const state = this.state;
+      for (let f = 0; f < state.factionCount; f++) {
+        if (f === state.playerFaction) continue;
+        this.playFaction(f);
+      }
+      return state.factionCount - (state.playerFaction < state.factionCount ? 1 : 0);
+    }
+    // Полный ход одной фракции: дипломатия, затем армия.
+    playFaction(factionId) {
+      const state = this.state;
+      const culture = cultureById(this.cultureOf(factionId));
+      if (!culture) return;
+      this.diplomacy(factionId, culture);
+      const armies2 = state.armies.filter((army) => army.faction === factionId);
+      for (const army of armies2) this.actArmy(army, culture);
+    }
+    cultureOf(factionId) {
+      const faction = this.state.factionInfo(factionId);
+      return faction && faction.culture !== void 0 ? faction.culture : factionId;
+    }
+    /* ---------- Дипломатия ---------- */
+    // Торговые культуры сближаются, агрессивные — портят отношения; небольшой шум делает ход живым.
+    diplomacy(factionId, culture) {
+      const state = this.state;
+      for (let other = 0; other < state.factionCount; other++) {
+        if (other === factionId) continue;
+        const noise = roll(this.seed + state.turn, factionId, other, 7) * 2 - 1;
+        const delta = (culture.trade - culture.aggression) * 6 + noise * 3;
+        state.changeRelation(factionId, other, delta);
+      }
+    }
+    /* ---------- Армия ---------- */
+    // Отряд идёт к цели: к вражескому отряду, иначе к ближайшей чужой земле (эфирным — если культура их любит).
+    actArmy(army, culture) {
+      const state = this.state;
+      if (army.moves <= 0) return;
+      const target = this.pickTarget(army, culture);
+      if (target === null) return;
+      const reachable = state.reachableTiles(army);
+      if (reachable.size === 0) return;
+      const size = state.generator.size;
+      const distance = (tile) => {
+        const ax = army.tile % size, ay = Math.floor(army.tile / size);
+        const bx = tile % size, by = Math.floor(tile / size);
+        return Math.abs(ax - bx) + Math.abs(ay - by);
+      };
+      let best = null, bestDistance = distance(army.tile);
+      for (const tile of reachable.keys()) {
+        const d = distance(tile, target);
+        if (d < bestDistance) {
+          bestDistance = d;
+          best = tile;
+        }
+      }
+      if (best !== null) state.moveArmy(army.id, best);
+    }
+    // Куда идёт отряд: враг, чужая земля, а для любителей эфира — ближайший эфир.
+    pickTarget(army, culture) {
+      const state = this.state;
+      const generator2 = state.generator;
+      const size = generator2.size;
+      let best = null, bestDistance = Infinity;
+      for (const other of state.armies) {
+        if (other.faction === army.faction) continue;
+        if (state.relationLevel(army.faction, other.faction) !== "war") continue;
+        const d = this.tileDistance(army.tile, other.tile, size);
+        if (d < bestDistance) {
+          bestDistance = d;
+          best = other.tile;
+        }
+      }
+      if (best !== null) return best;
+      for (const i of generator2.landTiles) {
+        const owner = generator2.factionId[i];
+        if (owner === army.faction) continue;
+        const d = this.tileDistance(army.tile, i, size);
+        if (d < bestDistance) {
+          bestDistance = d;
+          best = i;
+        }
+      }
+      if (culture.ether > 0.7) {
+        for (const i of generator2.landTiles) {
+          if (generator2.resource[i] !== 4) continue;
+          const d = this.tileDistance(army.tile, i, size);
+          if (d < bestDistance) {
+            bestDistance = d;
+            best = i;
+          }
+        }
+      }
+      return best;
+    }
+    tileDistance(a, b, size) {
+      return Math.abs(a % size - b % size) + Math.abs(Math.floor(a / size) - Math.floor(b / size));
+    }
+  };
+
+  // src/game/game-state.js
+  var START_TREASURY = 100;
+  var POPULATION_PER_GOLD = 40;
+  var ARMY_UPKEEP = 2;
+  var RELATION_MIN = -100;
+  var RELATION_MAX = 100;
+  var ALLY_FROM = 40;
+  var WAR_BELOW = -40;
+  var ARMY_RANGE = 3;
+  var ARMY_ZOC = 1;
+  var Diplomacy = Object.freeze({ WAR: "war", NEUTRAL: "neutral", ALLY: "ally" });
+  var GameState = class {
+    constructor(generator2) {
+      this.generator = generator2;
+      this.reset(generator2);
+    }
+    // Новая партия по текущей карте (вызывать после каждой генерации).
+    reset(generator2 = this.generator) {
+      this.generator = generator2;
+      this.turn = 1;
+      this.currentFaction = 0;
+      this.playerFaction = 0;
+      this.treasury = [];
+      this.income = [];
+      this.factionCount = generator2.factions ? generator2.factions.length : 0;
+      for (let f = 0; f < this.factionCount; f++) {
+        this.treasury[f] = START_TREASURY;
+        this.income[f] = this.monthlyIncome(f);
+      }
+      this.relations = /* @__PURE__ */ new Map();
+      this.armies = [];
+      for (let f = 0; f < this.factionCount; f++) this.spawnArmy(f);
+      this.ai = new AIController(this);
+      this.tint = generator2.factionColor ? generator2.factionColor.bind(generator2) : () => void 0;
+    }
+    /* ---------- Ходы ---------- */
+    // Полный ход: каждая фракция получает доход и действует. За игрока действует интерфейс, за остальных — ИИ.
+    endTurn() {
+      const income = this.advanceTurn();
+      this.ai.takeTurn();
+      this.resetArmyMoves();
+      return { turn: this.turn, income };
+    }
+    // Доход всех фракций и переход «хождения» к следующей фракции (без действий ИИ).
+    advanceTurn() {
+      for (let f = 0; f < this.factionCount; f++) {
+        this.treasury[f] += this.income[f];
+        this.income[f] = this.monthlyIncome(f);
+      }
+      this.currentFaction = this.factionCount > 0 ? (this.currentFaction + 1) % this.factionCount : 0;
+      if (this.currentFaction === 0) this.turn++;
+      return this.turn;
+    }
+    /* ---------- Экономика ---------- */
+    // Доход фракции за ход: население её регионов минус содержание отрядов.
+    monthlyIncome(factionId) {
+      const faction = this.factionInfo(factionId);
+      const population = faction ? faction.population : 0;
+      const upkeep = this.armies.filter((a) => a.faction === factionId).length * ARMY_UPKEEP;
+      return Math.max(1, Math.round(population / POPULATION_PER_GOLD) - upkeep);
+    }
+    factionInfo(factionId) {
+      return this.generator.factions ? this.generator.factions[factionId] || null : null;
+    }
+    /* ---------- Дипломатия ---------- */
+    // Текущее отношение между двумя фракциями (0 — нейтралитет).
+    relation(a, b) {
+      if (a === b) return RELATION_MAX;
+      return this.relations.get(this.relationKey(a, b)) || 0;
+    }
+    // Изменить отношение (шаг дипломатии). Значение всегда в пределах -100..100.
+    changeRelation(a, b, delta) {
+      if (a === b) return;
+      const key = this.relationKey(a, b);
+      this.relations.set(key, clamp((this.relations.get(key) || 0) + delta, RELATION_MIN, RELATION_MAX));
+    }
+    relationKey(a, b) {
+      return a < b ? `${a}|${b}` : `${b}|${a}`;
+    }
+    // Культура фракции и её цвет — для панели дипломатии (синяя/чёрная/... с квадратиком цвета).
+    cultureOf(factionId) {
+      const faction = this.factionInfo(factionId);
+      return cultureById(faction && faction.culture !== void 0 ? faction.culture : factionId);
+    }
+    cultureColor(factionId) {
+      const culture = this.cultureOf(factionId);
+      return culture ? culture.color : CULTURE_COLORS[0];
+    }
+    // Уровень отношений пары: 'war' | 'neutral' | 'ally' (по порогам WAR_BELOW / ALLY_FROM).
+    relationLevel(a, b) {
+      if (a === b) return Diplomacy.ALLY;
+      const value = this.relation(a, b);
+      if (value <= WAR_BELOW) return Diplomacy.WAR;
+      if (value >= ALLY_FROM) return Diplomacy.ALLY;
+      return Diplomacy.NEUTRAL;
+    }
+    // Все пары фракций с их уровнями отношений — ключ «a|b» -> 'war' | 'neutral' | 'ally' (для отрисовки границ).
+    relationLevels() {
+      const levels = /* @__PURE__ */ new Map();
+      for (let a = 0; a < this.factionCount; a++) {
+        for (let b = a + 1; b < this.factionCount; b++) levels.set(this.relationKey(a, b), this.relationLevel(a, b));
+      }
+      return levels;
+    }
+    /* ---------- Армия ---------- */
+    // Новый отряд фракции; встаёт в центр самого крупного её региона (или в первую клетку суши).
+    spawnArmy(factionId) {
+      const faction = this.factionInfo(factionId);
+      const tile = faction && faction.regions.length > 0 ? this.regionCenter(this.biggestRegion(faction)) : this.generator.landTiles[0] || 0;
+      const army = {
+        id: `army-${factionId}-${this.armies.length}`,
+        faction: factionId,
+        tile,
+        strength: 100,
+        moves: ARMY_RANGE
+        // сколько клеток ещё можно пройти в этом ходу
+      };
+      this.armies.push(army);
+      return army;
+    }
+    // Самый крупный регион фракции (по числу клеток) — там и ставим стартовый отряд.
+    biggestRegion(faction) {
+      let best = faction.regions[0];
+      for (const id of faction.regions) {
+        if ((this.generator.regionSizes[id] || 0) > (this.generator.regionSizes[best] || 0)) best = id;
+      }
+      return best;
+    }
+    regionCenter(regionId) {
+      const region = this.generator.getRegionInfo(regionId);
+      if (!region || region.tiles.length === 0) return 0;
+      return region.tiles[Math.floor(region.tiles.length / 2)];
+    }
+    armyById(id) {
+      return this.armies.find((a) => a.id === id) || null;
+    }
+    // Все клетки, до которых отряд может дойти за свои очки движения (по суше, не через воду).
+    reachableTiles(army) {
+      const start = army.tile;
+      const distance = /* @__PURE__ */ new Map([[start, 0]]);
+      const queue = [start];
+      for (let head = 0; head < queue.length; head++) {
+        const tile = queue[head];
+        const step = distance.get(tile);
+        if (step >= army.moves) continue;
+        for (const next of this.generator.neighbors(tile)) {
+          if (!this.generator.isLand(next) || distance.has(next)) continue;
+          distance.set(next, step + 1);
+          queue.push(next);
+        }
+      }
+      distance.delete(start);
+      return distance;
+    }
+    canReach(army, tile) {
+      return this.reachableTiles(army).has(tile);
+    }
+    // Клетки, куда доходит зона охвата/перехвата отряда (соседи в радиусе ARMY_ZOC).
+    zoneOfControl(army) {
+      const zone = /* @__PURE__ */ new Set();
+      for (const tile of this.neighborsWithin(army.tile, ARMY_ZOC)) {
+        if (tile !== army.tile) zone.add(tile);
+      }
+      return zone;
+    }
+    // Все клетки в радиусе radius (по суше) вокруг стартовой.
+    neighborsWithin(start, radius) {
+      const distance = /* @__PURE__ */ new Map([[start, 0]]);
+      const queue = [start];
+      for (let head = 0; head < queue.length; head++) {
+        const tile = queue[head];
+        const step = distance.get(tile);
+        if (step >= radius) continue;
+        for (const next of this.generator.neighbors(tile)) {
+          if (!this.generator.isLand(next) || distance.has(next)) continue;
+          distance.set(next, step + 1);
+          queue.push(next);
+        }
+      }
+      return distance.keys();
+    }
+    // Переместить отряд, потратив очки движения на пройденный путь (заготовка без учёта перехвата).
+    moveArmy(id, tile) {
+      const army = this.armyById(id);
+      if (!army) return null;
+      const step = this.reachableTiles(army).get(tile);
+      if (step === void 0) return army;
+      army.tile = tile;
+      army.moves = Math.max(0, army.moves - step);
+      return army;
+    }
+    // Восстановить очки движения всем отрядам (начало хода).
+    resetArmyMoves() {
+      for (const army of this.armies) army.moves = ARMY_RANGE;
+    }
+  };
+
+  // src/ui/controls.js
+  function bindToggle(id, apply) {
+    const button = document.getElementById(id);
+    button.addEventListener("click", () => {
+      const on = button.getAttribute("aria-pressed") !== "true";
+      button.setAttribute("aria-pressed", on);
+      apply(on);
+    });
+  }
+  function bindChoiceGroup(name, apply) {
+    const buttons = document.querySelectorAll(`[data-${name}]`);
+    buttons.forEach((button) => {
+      button.addEventListener("click", () => {
+        buttons.forEach((other) => other.setAttribute("aria-pressed", other === button));
+        apply(button.dataset[name]);
+      });
+    });
+  }
+  function bindPanelToggles() {
+    document.querySelectorAll("[data-toggle-panel]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const panel = document.getElementById(button.dataset.togglePanel);
+        if (panel) panel.style.display = panel.style.display === "none" ? "flex" : "none";
+      });
+    });
+  }
+
   // src/ui/demo-objects.js
   function demoObjects(generator2) {
     const size = generator2.size;
@@ -5458,6 +6035,160 @@
     return `\u0421\u0443\u0448\u0430: ${landPercent}% \xB7 \u0440\u0435\u0433\u0438\u043E\u043D\u043E\u0432: ${regions2} \xB7 \u0432 \u0441\u0440\u0435\u0434\u043D\u0435\u043C ${average} \u043A\u0432. \u041D\u0430\u0432\u0435\u0434\u0438\u0442\u0435 \u043D\u0430 \u043A\u0432\u0430\u0434\u0440\u0430\u0442.`;
   }
 
+  // src/game/sections.js
+  var NUMBER = new Intl.NumberFormat("ru-RU");
+  function factionName(state, id) {
+    const faction = state.factionInfo(id);
+    return faction ? faction.name : `\u0424\u0440\u0430\u043A\u0446\u0438\u044F ${id + 1}`;
+  }
+  var SECTIONS = [
+    {
+      id: "turns",
+      title: "\u0425\u043E\u0434\u044B",
+      icon: "\u23F3",
+      summary(state) {
+        return [
+          `\u0425\u043E\u0434: ${state.turn}`,
+          `\u0421\u0435\u0439\u0447\u0430\u0441 \u0445\u043E\u0434\u0438\u0442: ${state.factionCount ? factionName(state, state.currentFaction) : "\u2014"}`,
+          `\u0424\u0440\u0430\u043A\u0446\u0438\u0439 \u043D\u0430 \u043A\u0430\u0440\u0442\u0435: ${state.factionCount}`
+        ];
+      },
+      actions: [
+        { label: "\u0421\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u0445\u043E\u0434 (\u0418\u0418)", run(state) {
+          state.endTurn();
+        } }
+      ]
+    },
+    {
+      id: "economy",
+      title: "\u042D\u043A\u043E\u043D\u043E\u043C\u0438\u043A\u0430",
+      icon: "\u{1F4B0}",
+      summary(state) {
+        if (state.factionCount === 0) return ["\u041D\u0430 \u043A\u0430\u0440\u0442\u0435 \u043D\u0435\u0442 \u0444\u0440\u0430\u043A\u0446\u0438\u0439."];
+        return state.generator.factions.map((faction, f) => {
+          const sign = state.income[f] >= 0 ? "+" : "";
+          return `${faction.name}: \u043A\u0430\u0437\u043D\u0430 ${NUMBER.format(state.treasury[f])} (${sign}${state.income[f]}/\u0445\u043E\u0434), \u043D\u0430\u0441\u0435\u043B\u0435\u043D\u0438\u0435 ${NUMBER.format(faction.population)}`;
+        });
+      },
+      actions: [
+        { label: "\u0421\u043E\u0431\u0440\u0430\u0442\u044C \u043D\u0430\u043B\u043E\u0433\u0438", run(state) {
+          state.treasury = state.treasury.map((t, f) => t + state.income[f]);
+        } },
+        { label: "\u041F\u0435\u0440\u0435\u0441\u0447\u0438\u0442\u0430\u0442\u044C \u0434\u043E\u0445\u043E\u0434\u044B", run(state) {
+          state.income = state.income.map((_, f) => state.monthlyIncome(f));
+        } }
+      ]
+    },
+    {
+      id: "diplomacy",
+      title: "\u0414\u0438\u043F\u043B\u043E\u043C\u0430\u0442\u0438\u044F",
+      icon: "\u{1F91D}",
+      // Дипломатия рисуется не текстом, а разметкой: превью карты и список фракций с культурой.
+      html: "diplomacy",
+      summary(state) {
+        return state.factionCount ? [`\u0424\u0440\u0430\u043A\u0446\u0438\u0439: ${state.factionCount}`] : ["\u041D\u0430 \u043A\u0430\u0440\u0442\u0435 \u043D\u0435\u0442 \u0444\u0440\u0430\u043A\u0446\u0438\u0439."];
+      },
+      actions: [
+        { label: "\u0423\u043A\u0440\u0435\u043F\u0438\u0442\u044C \u0441\u0432\u044F\u0437\u0438", run(state) {
+          state.changeRelation(0, 1, 10);
+        } },
+        { label: "\u041E\u0431\u043E\u0441\u0442\u0440\u0438\u0442\u044C \u043E\u0442\u043D\u043E\u0448\u0435\u043D\u0438\u044F", run(state) {
+          state.changeRelation(0, 1, -10);
+        } },
+        { label: "\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u043E\u0442\u043D\u043E\u0448\u0435\u043D\u0438\u044F", run(state) {
+          state.relations.clear();
+        } }
+      ]
+    },
+    {
+      id: "army",
+      title: "\u0410\u0440\u043C\u0438\u044F",
+      icon: "\u2694\uFE0F",
+      summary(state) {
+        if (state.armies.length === 0) return ["\u041E\u0442\u0440\u044F\u0434\u043E\u0432 \u043F\u043E\u043A\u0430 \u043D\u0435\u0442."];
+        return state.armies.map((army) => {
+          const x = army.tile % state.generator.size;
+          const y = Math.floor(army.tile / state.generator.size);
+          return `${army.id} \xB7 ${factionName(state, army.faction)} \xB7 \u0441\u0438\u043B\u0430 ${army.strength} \xB7 \u043A\u043B\u0435\u0442\u043A\u0430 (${x}, ${y})`;
+        });
+      },
+      actions: [
+        { label: "\u041D\u043E\u0432\u044B\u0439 \u043E\u0442\u0440\u044F\u0434 (\u0444\u0440\u0430\u043A\u0446\u0438\u044F 1)", run(state) {
+          if (state.factionCount > 0) state.spawnArmy(0);
+        } },
+        { label: "\u041F\u043E\u043F\u043E\u043B\u043D\u0438\u0442\u044C \u043E\u0442\u0440\u044F\u0434\u044B", run(state) {
+          for (const army of state.armies) army.strength = Math.min(200, army.strength + 25);
+        } }
+      ]
+    }
+  ];
+
+  // src/ui/sections-panel.js
+  var NUMBER2 = new Intl.NumberFormat("ru-RU");
+  function createSectionsPanel(state, options = {}) {
+    const panel = document.getElementById("sections-panel");
+    const title = document.getElementById("sections-title");
+    const summary = document.getElementById("sections-summary");
+    const actions = document.getElementById("sections-actions");
+    const resources2 = document.getElementById("turn-resources");
+    let openId = null;
+    function sectionById(id) {
+      return SECTIONS.find((section) => section.id === id) || SECTIONS[0];
+    }
+    function renderSummary(section) {
+      if (section.html === "diplomacy" && options.renderDiplomacy) {
+        summary.innerHTML = options.renderDiplomacy();
+        return;
+      }
+      summary.textContent = section.summary(state).join("\n");
+    }
+    function renderActions(section) {
+      actions.innerHTML = "";
+      for (const action of section.actions || []) {
+        const button = document.createElement("button");
+        button.textContent = action.label;
+        button.addEventListener("click", () => {
+          action.run(state);
+          refresh();
+          if (options.onChange) options.onChange();
+        });
+        actions.appendChild(button);
+      }
+    }
+    function renderResources() {
+      if (!resources2) return;
+      const faction = state.factionInfo(state.currentFaction);
+      const gold = state.treasury[state.currentFaction] ?? 0;
+      const income = state.income[state.currentFaction] ?? 0;
+      resources2.textContent = faction ? `${faction.name} \xB7 \u{1F4B0} ${NUMBER2.format(gold)} (${income >= 0 ? "+" : ""}${income}) \xB7 \u{1F465} ${NUMBER2.format(faction.population)}` : "\u0424\u0440\u0430\u043A\u0446\u0438\u0439 \u043D\u0435\u0442";
+    }
+    function refresh() {
+      renderResources();
+      if (openId) {
+        const section = sectionById(openId);
+        renderSummary(section);
+        renderActions(section);
+      }
+    }
+    function show(id) {
+      openId = id || SECTIONS[0].id;
+      const section = sectionById(openId);
+      title.textContent = `${section.icon} ${section.title}`;
+      panel.hidden = false;
+      renderSummary(section);
+      renderActions(section);
+    }
+    function toggle(id) {
+      if (openId === id && !panel.hidden) {
+        panel.hidden = true;
+        return;
+      }
+      show(id);
+    }
+    refresh();
+    return { show, toggle, refresh };
+  }
+
   // src/main.js
   var generator = new MapGenerator({
     size: 150
@@ -5486,15 +6217,64 @@
   var info = document.getElementById("info");
   var selectionPanel = document.getElementById("selection");
   var seedInput = document.getElementById("seed");
+  var gameState = new GameState(generator);
+  var sectionsPanel = createSectionsPanel(gameState, {
+    onChange: () => syncGame(),
+    renderDiplomacy: () => renderDiplomacy()
+  });
+  renderer.setArmyModel(gameState);
+  function renderDiplomacy() {
+    const preview = renderer.thumbnail(220);
+    const rows = [];
+    for (let f = 0; f < gameState.factionCount; f++) {
+      const faction = gameState.factionInfo(f);
+      const culture = gameState.cultureOf(f);
+      const you = f === gameState.playerFaction ? " (\u0432\u044B)" : "";
+      const status = f === gameState.playerFaction ? "\u2014" : relationName(gameState.relationLevel(gameState.playerFaction, f));
+      rows.push(`
+            <div class="diplo-row">
+                <span class="diplo-swatch" style="background:${gameState.cultureColor(f)}"></span>
+                <span class="diplo-name">${faction ? faction.name : `\u0424\u0440\u0430\u043A\u0446\u0438\u044F ${f + 1}`}${you}</span>
+                <span class="diplo-culture">${culture ? culture.name : "\u2014"}</span>
+                <span class="diplo-status">${status}</span>
+            </div>`);
+    }
+    return `
+        <div class="diplo-preview">
+            ${preview ? `<img src="${preview}" alt="\u041A\u0430\u0440\u0442\u0430" width="220" height="220">` : "<em>\u043D\u0435\u0442 \u043F\u0440\u0435\u0432\u044C\u044E</em>"}
+        </div>
+        <div class="diplo-list">${rows.join("")}</div>`;
+  }
+  function relationName(level) {
+    return { war: "\u0432\u043E\u0439\u043D\u0430", ally: "\u0441\u043E\u044E\u0437", neutral: "\u043D\u0435\u0439\u0442\u0440\u0430\u043B\u044C\u043D\u043E" }[level] || level;
+  }
+  function syncGame() {
+    renderer.setViewerFaction(gameState.playerFaction);
+    renderer.setArmies(gameState.armies);
+    renderer.setRelations(gameState.relationLevels());
+    const thumb = document.getElementById("diplo-thumb");
+    if (thumb) thumb.src = renderer.thumbnail(64);
+    sectionsPanel.refresh();
+  }
   function buildMap() {
     generator.generate(Number(seedInput.value) || 1);
     renderer.refresh();
     info.textContent = describeStats(generator);
+    gameState.reset(generator);
+    syncGame();
   }
   renderer.onHover = (tile) => {
     if (tile) info.textContent = describeTile(tile);
   };
   renderer.onSelect = (tile, region) => {
+    const army = renderer.armySelection;
+    if (army && tile && gameState.canReach(army, tile.index)) {
+      gameState.moveArmy(army.id, tile.index);
+      renderer.clearArmySelection();
+      syncGame();
+      info.textContent = `\u041E\u0442\u0440\u044F\u0434 \u043F\u0435\u0440\u0435\u0448\u0451\u043B \u0432 (${tile.x}, ${tile.y}) \xB7 \u043E\u0441\u0442\u0430\u043B\u043E\u0441\u044C \u0445\u043E\u0434\u043E\u0432: ${army.moves}`;
+      return;
+    }
     if (!tile) {
       selectionPanel.hidden = true;
       return;
@@ -5502,6 +6282,15 @@
     selectionPanel.hidden = false;
     selectionPanel.textContent = region ? `\u041A\u043B\u0435\u0442\u043A\u0430 ${describeTile(tile)}
 ${describeRegion(region)}` : `\u041A\u043B\u0435\u0442\u043A\u0430 ${describeTile(tile)}`;
+  };
+  renderer.onArmyClick = (army) => {
+    const own = army.faction === gameState.playerFaction;
+    if (!own) {
+      info.textContent = `\u041E\u0442\u0440\u044F\u0434 \u0444\u0440\u0430\u043A\u0446\u0438\u0438 ${army.faction + 1} \xB7 \u0441\u0438\u043B\u0430 ${army.strength}`;
+      return;
+    }
+    renderer.selectArmy(army);
+    info.textContent = `\u041E\u0442\u0440\u044F\u0434 \u0432\u044B\u0431\u0440\u0430\u043D \xB7 \u0441\u0438\u043B\u0430 ${army.strength} \xB7 \u0445\u043E\u0434\u043E\u0432: ${army.moves}. \u041A\u043B\u0438\u043A\u043D\u0438\u0442\u0435 \u043A\u043B\u0435\u0442\u043A\u0443 \u0432 \u043F\u043E\u0434\u0441\u0432\u0435\u0447\u0435\u043D\u043D\u043E\u0439 \u0437\u043E\u043D\u0435.`;
   };
   renderer.onObjectClick = (object) => {
     info.textContent = `\u041E\u0431\u044A\u0435\u043A\u0442: ${object.id}`;
@@ -5520,5 +6309,8 @@ ${describeRegion(region)}` : `\u041A\u043B\u0435\u0442\u043A\u0430 ${describeTil
   bindToggle("mood", (on) => renderer.setMood(on ? "dark" : "light"));
   bindToggle("settlements", (on) => renderer.setShowSettlements(on));
   bindPanelToggles();
+  for (const button of document.querySelectorAll("[data-section]")) {
+    button.addEventListener("click", () => sectionsPanel.toggle(button.dataset.section));
+  }
   buildMap();
 })();

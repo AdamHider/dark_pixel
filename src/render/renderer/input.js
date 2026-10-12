@@ -31,9 +31,14 @@ export const input = {
             // Клик — это нажатие без заметного перетаскивания.
             if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) < 5) {
                 const point = this.pointerToCanvas(e);
-                const object = this.onObjectClick ? this.objectAt(point) : null;
-                if (object) this.onObjectClick(object);
-                else this.selectAt(point);
+                const army = this.armyAt(point);
+                if (army) {
+                    this.onArmyClick && this.onArmyClick(army);
+                } else {
+                    const object = this.onObjectClick ? this.objectAt(point) : null;
+                    if (object) this.onObjectClick(object);
+                    else this.selectAt(point);
+                }
             }
         });
         canvas.addEventListener('pointercancel', stopDragging);

@@ -28,7 +28,6 @@ export const factions = {
         const T = this.tileSize;
         const W = this.width;
         const pixels = this.pixels;
-        const palette = this.colors.factionColors;
         const ink = this.colors.factionBorder;
         const radius = Math.max(2, this.px(5));
 
@@ -59,10 +58,28 @@ export const factions = {
                     if (d >= radius || d <= 0) continue;
                     const alpha = (d / radius) * 0.9;
                     if (BAYER[(gy & 3) * 4 + (gx & 3)] >= alpha * 2) continue;   // мягкая пиксельная кромка
-                    pixels[k] = mixPacked(pixels[k], ink, alpha * 0.5);          // тёмная подложка под цвет фракции
-                    pixels[k] = mixPacked(pixels[k], palette[id % palette.length], alpha);
+                    /* Граница двухцветная: у самого края (внешний слой) — цвет дип. статуса с соседом,
+                       ближе к своей земле — цвет фракции. Если отношений нет, внешний слой просто тёмный. */
+                    const status = this.diplomacyColor(id, edgeRight ? right : below) || ink;
+                    pixels[k] = mixPacked(pixels[k], status, alpha * 0.75);
+                    pixels[k] = mixPacked(pixels[k], this.factionColor(id), alpha * 0.85);
                 }
             }
         }
+    },
+
+    // Ключ пары фракций, одинаковый при любом порядке (как в GameState.relationKey).
+    relationKey(a, b) {
+        return a < b ? `${a}|${b}` : `${b}|${a}`;
+    },
+
+    // Цвет дип. статуса пары фракций (или null, если отношение нейтрально).
+    diplomacyColor(a, b) {
+        if (!this.relations) return null;
+        const level = this.relations.get(this.relationKey(a, b));
+        if (level === 'war') return this.colors.factionWar;
+        if (level === 'ally') return this.colors.factionAlly;
+        if (level === 'neutral') return this.colors.factionNeutral;
+        return null;
     },
 };

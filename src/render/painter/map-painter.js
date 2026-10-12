@@ -1,5 +1,6 @@
 import { hexToPacked, mixPacked, packPalette } from '../color.js';
 import { DARK_SEASONS, SEASONS } from '../seasons.js';
+import { CULTURE_COLORS } from '../../game/cultures.js';
 import { COLORS } from './constants.js';
 import { base } from './layers/base.js';
 import { coast } from './layers/coast.js';
@@ -69,13 +70,18 @@ export class MapPainter {
         for (const [name, hex] of Object.entries(COLORS)) {
             this.colors[name] = Array.isArray(hex) ? hex.map(hexToPacked) : hexToPacked(hex);
         }
+        this.cultureColors = CULTURE_COLORS.map(hexToPacked);   // цвета культур: ими красим владения фракций
     }
 
     /* ---------- Главный метод ---------- */
 
     // view: 'terrain' | 'temperature' | 'regions'. Возвращает холст с готовой картой.
-    paint({ view, seasonName, showBorders, showFactions, mood }) {
+    // relations — Map «ключ пары фракций -> уровень отношений» ('war' | 'neutral' | 'ally'): им красится граница.
+    // viewerFaction — чья карта: в режиме «Политика» свои земли, союзники, враги и нейтралы красятся по-разному.
+    paint({ view, seasonName, showBorders, showFactions, mood, relations, viewerFaction }) {
         this.view = view;
+        this.relations = relations || null;
+        this.viewerFaction = viewerFaction | 0;
         this.mood = mood === 'dark' ? 'dark' : 'light';
         this.season = (this.mood === 'dark' ? DARK_SEASONS : SEASONS)[seasonName];
         this.pal = this.season.palette;
