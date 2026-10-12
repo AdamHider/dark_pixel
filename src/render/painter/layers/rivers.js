@@ -218,10 +218,13 @@ export const rivers = {
     },
 
     // Переправа: каменный мост (река глубже 1) или брод из камней (ручей). Рисуется поперёк течения.
+    // Длину и центр берём по настоящим пикселям реки в клетке, поэтому мост всегда лежит от берега до берега.
     paintCrossing(x, y, i) {
         const map = this.map;
         const T = this.tileSize;
+        const W = this.width;
         const c = this.colors;
+        const mask = this.riverMask;
         const to = map.riverTo[i];
         const flowX = to === -1 ? 0 : (to % map.size) - x;
         const flowY = to === -1 ? 0 : Math.floor(to / map.size) - y;
@@ -229,27 +232,53 @@ export const rivers = {
             ? x > 0 && x < map.size - 1 && map.river[i - 1] > 0 && map.river[i + 1] > 0
             : Math.abs(flowX) >= Math.abs(flowY);
 
+        // Границы русла в клетке: «вдоль» течения и «поперёк».
+        const left = x * T, top = y * T;
+        let minAcross = Infinity, maxAcross = -Infinity, sumAlong = 0, count = 0;
+        if (mask) {
+            for (let gy = top; gy < top + T; gy++) {
+                for (let gx = left; gx < left + T; gx++) {
+                    if (!mask[gy * W + gx]) continue;
+                    const along = horizontalFlow ? gx : gy;
+                    const across = horizontalFlow ? gy : gx;
+                    if (across < minAcross) minAcross = across;
+                    if (across > maxAcross) maxAcross = across;
+                    sumAlong += along;
+                    count++;
+                }
+            }
+        }
+        const middle = Math.floor(T / 2);
+        if (count === 0) {                                   // маски нет — считаем по ширине реки
+            const center = (horizontalFlow ? top : left) + middle;
+            minAcross = center - this.riverWidthAt(i) / 2;
+            maxAcross = center + this.riverWidthAt(i) / 2;
+            sumAlong = (horizontalFlow ? left : top) + middle;
+            count = 1;
+        }
+
         // Работаем в координатах «вдоль течения» (a) и «поперёк течения» (b), затем переводим в x, y.
         const put = (a, b, w, h, color) => (horizontalFlow
-            ? this.rect(x * T + a, y * T + b, w, h, color)
-            : this.rect(x * T + b, y * T + a, h, w, color));
-        const middle = Math.floor(T / 2);
-        const river = this.riverWidthAt(i);
+            ? this.rect(a, b, w, h, color)
+            : this.rect(b, a, h, w, color));
+        const bank = Math.max(1, this.px(2));                 // насколько мост заходит на берег
+        const centerAlong = Math.round(sumAlong / count);
+        const acrossFrom = Math.round(minAcross) - bank;
+        const acrossTo = Math.round(maxAcross) + bank;
+        const span = acrossTo - acrossFrom + 1;
 
         if (map.crossing[i] === 2) {
-            const length = Math.min(T, river + this.px(4));   // мост выступает за оба берега
             const thickness = this.px(5);
-            const a0 = middle - (thickness >> 1);
-            const b0 = middle - (length >> 1);
-            put(a0, b0, thickness, length, c.bridgeDeck);
-            put(a0, b0, 1, length, c.bridgeEdge);
-            put(a0 + thickness - 1, b0, 1, length, c.bridgeEdge);
+            const a0 = centerAlong - (thickness >> 1);
+            put(a0, acrossFrom, thickness, span, c.bridgeDeck);
+            put(a0, acrossFrom, 1, span, c.bridgeEdge);
+            put(a0 + thickness - 1, acrossFrom, 1, span, c.bridgeEdge);
         } else {
-            const stones = 3;
+            const stones = Math.max(2, Math.min(5, Math.round(span / this.px(3))));
             for (let k = 0; k < stones; k++) {
-                const b = middle - (river >> 1) + Math.round(k * (river - 2) / (stones - 1)) - 1;
-                put(middle - 1, b, 2, 2, c.stone);
-                put(middle, b + 1, 1, 1, c.stoneShadow);
+                const b = acrossFrom + Math.round(k * (span - 2) / (stones - 1));
+                put(centerAlong - 1, b, 2, 2, c.stone);
+                put(centerAlong, b + 1, 1, 1, c.stoneShadow);
             }
         }
     },

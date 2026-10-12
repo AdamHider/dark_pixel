@@ -1,5 +1,5 @@
 import { Biome, Resource, Shore, Terrain } from '../../../map/constants.js';
-import { shadePacked } from '../../color.js';
+import { packRgb, shadePacked } from '../../color.js';
 import { hashUnit } from '../noise.js';
 
 /* Тёмный стиль: кости, вороны, развалины, виселицы */
@@ -20,11 +20,41 @@ export const props = {
             const base = y * T + Math.round(hashUnit(x, y, 952) * (T - 4)) + 3;
             const dry = [Biome.STEPPE, Biome.DESERT, Biome.TUNDRA, Biome.SAVANNA].includes(map.biome[i]);
 
-            if (dry && roll < 0.014) items.push({ y: base, x: cx, draw: () => this.drawBones(cx, base) });
+            if (map.biome[i] === Biome.ETHER_LAND) {                 // земли эфира: тёмные кристаллы-осколки на земле
+                if (roll < 0.06) items.push({ y: base, x: cx, draw: () => this.drawShard(cx, base) });
+            } else if (map.biome[i] === Biome.DEAD_LAND) {           // мёртвые земли: кости и обугленные пни
+                if (roll < 0.05) items.push({ y: base, x: cx, draw: () => this.drawBones(cx, base) });
+                else if (roll < 0.09) items.push({ y: base, x: cx, draw: () => this.drawCharredStump(cx, base) });
+            } else if (dry && roll < 0.014) items.push({ y: base, x: cx, draw: () => this.drawBones(cx, base) });
             else if (!dry && roll < 0.006) items.push({ y: base, x: cx, draw: () => this.drawCrow(cx, base) });
             else if (roll > 0.994 && roll <= 0.9985) items.push({ y: base, x: cx, draw: () => this.drawRuin(cx, base, x, y) });
             else if (roll > 0.9985) items.push({ y: base, x: cx, draw: () => this.drawGibbet(cx, base) });
         });
+    },
+
+    // Обугленный пень — мёртвое дерево, оставшееся после пожара или скверны.
+    drawCharredStump(cx, base) {
+        const dark = packRgb(38, 32, 30), ash = packRgb(78, 70, 66);
+        this.drawShadow(cx, base, this.px(5));
+        this.rect(cx - 1, base - this.px(3), this.px(3), this.px(3), dark);
+        this.put(cx - 1, base - this.px(3), ash);
+        this.put(cx + this.px(2), base - this.px(4), dark);
+        this.put(cx - this.px(2), base - this.px(2), dark);
+        this.put(cx + 1, base - this.px(5), dark);
+    },
+
+    // Осколок эфирного кристалла, торчащий из земли (без свечения — оно рисуется у ресурса эфира).
+    drawShard(cx, base) {
+        const light = packRgb(196, 150, 244), mid = packRgb(140, 78, 214), dark = packRgb(78, 36, 132);
+        const height = this.px(3) + (hashUnit(cx, base, 954) < 0.5 ? 1 : 2);
+        this.drawShadow(cx, base, this.px(3));
+        for (let row = 0; row < height; row++) {
+            const half = row === 0 ? 0 : 1;
+            this.rect(cx - half, base - row, half + 1, 1, light);
+            this.put(cx + half, base - row, dark);
+            this.put(cx, base - row, mid);
+        }
+        this.put(cx, base - height, light);
     },
 
     drawBones(cx, base) {

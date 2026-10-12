@@ -1,4 +1,5 @@
 import { clamp } from '../../../core/math.js';
+import { mixPacked } from '../../color.js';
 import { BAYER } from '../constants.js';
 import { smoothstep } from '../noise.js';
 
@@ -16,6 +17,8 @@ export const base = {
         const W = this.width;
         const pixels = this.pixels;
         const { colors, water } = this.buildTileColors();
+        this.tileColors = colors;      // нужны слою сглаживания берега
+        this.tileWater = water;
         const smooth = this.view !== 'regions'; // в режиме регионов границы должны быть точными
         const quadOf = this.blendGrid().quadOf;
 
@@ -156,11 +159,13 @@ export const base = {
         return true;
     },
 
-    /* Скругление берега: выпуклый пиксель суши, у которого вода с двух соседних сторон (а с двух других — суша), —
-       «прямой угол» ступеньки. Такие пиксели заменяем цветом соседней воды; за несколько проходов углы становятся округлыми. */
-    roundCoastCorners() {
-        const passes = this.options.roundCoast;
-        if (!passes) return;
+    /* Сглаживание берега.
+       Маска «суша/вода» размывается на уровне клеток, поэтому линия берега перестаёт идти по границам клеток:
+       выпуклые прямые углы скругляются, а между береговыми клетками появляются плавные заливы и мысы.
+       Размытое поле интерполируется по пикселям, и берег проводится по его середине — с узкой дизеринг-каймой
+       для мягкой кромки. */
+    smoothCoast() {
+        if (this.view !== 'terrain' || !this.map.landTiles || this.options.coastSmoothing === false) return;
 
         const map = this.map;
         const size = map.size;
@@ -168,41 +173,81 @@ export const base = {
         const W = this.width;
         const pixels = this.pixels;
         const water = this.waterMask;
+        const axis = this.axis;
+        const { first, second, fraction } = axis;
+        const colors = this.tileColors, tileWater = this.tileWater;
+        if (!colors) return;
 
-        const coastTiles = [];                          // клетки, рядом с которыми есть и вода, и суша
-        for (let ty = 0; ty < size; ty++) {
-            for (let tx = 0; tx < size; tx++) {
-                let land = false, wet = false;
-                for (let dy = -1; dy <= 1; dy++) {
-                    for (let dx = -1; dx <= 1; dx++) {
-                        const nx = tx + dx, ny = ty + dy;
+        // Поле «воды» на уровне клеток: 1 — вода, 0 — суша; размываем, чтобы срезать прямые углы.
+        let field = new Float32Array(size * size);
+        for (let i = 0; i < field.length; i++) field[i] = tileWater[i] ? 1 : 0;
+        const blur = source => {
+            const out = new Float32Array(source.length);
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    let sum = 0, count = 0;
+                    for (let dy = -1; dy <= 1; dy++) {
+                        for (let dx = -1; dx <= 1; dx++) {
+                            const nx = x + dx, ny = y + dy;
+                            if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+                            sum += source[ny * size + nx];
+                            count++;
+                        }
+                    }
+                    out[y * size + x] = sum / count;
+                }
+            }
+            return out;
+        };
+        field = blur(blur(field));
+
+        const waterColorOf = new Map(), landColorOf = new Map();
+        const nearestColor = (tile, cache, wantLand) => {
+            if (cache.has(tile)) return cache.get(tile);
+            let color = colors[tile];
+            const x = tile % size, y = Math.floor(tile / size);
+            for (let radius = 1; radius <= 3; radius++) {
+                let found = -1;
+                for (let dy = -radius; dy <= radius && found < 0; dy++) {
+                    for (let dx = -radius; dx <= radius; dx++) {
+                        const nx = x + dx, ny = y + dy;
                         if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
-                        if (map.isLand(ny * size + nx)) land = true; else wet = true;
+                        if ((tileWater[ny * size + nx] ? false : true) === wantLand) { found = ny * size + nx; break; }
                     }
                 }
-                if (land && wet) coastTiles.push(ty * size + tx);
+                if (found >= 0) { color = colors[found]; break; }
             }
-        }
+            cache.set(tile, color);
+            return color;
+        };
 
-        for (let pass = 0; pass < passes; pass++) {
-            const changes = [];
-            for (const tile of coastTiles) {
-                const x0 = (tile % size) * T, y0 = Math.floor(tile / size) * T;
+        const shallow = this.packed.waterShades[0];
+        for (let ty = 0; ty < size; ty++) {
+            for (let tx = 0; tx < size; tx++) {
+                const baseWater = tileWater[ty * size + tx] ? 1 : 0;
+                const tile = ty * size + tx;
+                const x0 = tx * T, y0 = ty * T;
                 for (let gy = y0; gy < y0 + T; gy++) {
+                    const r0 = first[gy] * size, r1 = second[gy] * size, v = fraction[gy];
                     for (let gx = x0; gx < x0 + T; gx++) {
+                        const u = fraction[gx];
+                        const a = field[r0 + first[gx]], b = field[r0 + second[gx]];
+                        const c = field[r1 + first[gx]], d = field[r1 + second[gx]];
+                        const topRow = a + (b - a) * u;
+                        const fv = topRow + (c + (d - c) * u - topRow) * v;
+                        const newWater = fv > 0.5 ? 1 : 0;
+                        if (newWater === baseWater) continue;               // пиксель уже на своей стороне
+
                         const k = gy * W + gx;
-                        if (water[k]) continue;
-                        const left = gx > 0 && water[k - 1], right = gx < W - 1 && water[k + 1];
-                        const up = gy > 0 && water[k - W], down = gy < W - 1 && water[k + W];
-                        if ((left || right) && (up || down) && !(left && right) && !(up && down)) {
-                            changes.push(k, left ? k - 1 : k + 1);
+                        if (newWater) {
+                            pixels[k] = mixPacked(nearestColor(tile, waterColorOf, false), shallow, 0.6);
+                            water[k] = 1;
+                        } else {
+                            pixels[k] = nearestColor(tile, landColorOf, true);
+                            water[k] = 0;
                         }
                     }
                 }
-            }
-            for (let c = 0; c < changes.length; c += 2) {
-                pixels[changes[c]] = pixels[changes[c + 1]];
-                water[changes[c]] = 1;
             }
         }
     },

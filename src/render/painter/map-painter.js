@@ -53,7 +53,6 @@ export class MapPainter {
             settlementMinHouses: 1, // домиков в самом маленьком поселении
             settlementMaxHouses: 3, // домиков в клетке высшего уровня (если они помещаются)
             settlementOverflow: 0.25, // на сколько (доля клетки) основание дома может выйти за границу своей клетки
-            roundCoast: 1,         // сколько раз скруглять выпуклые прямые углы берега (0 — не скруглять)
             spriteOutline: false,  // тёмный контур вокруг построек, руд и эфира (в стиле dark fantasy выключен)
             grade: true,           // в тёмном стиле: цветокоррекция, туман, виньетка
             vignette: 0.35,        // затемнение к краям карты в тёмном стиле (0 — нет)
@@ -95,7 +94,7 @@ export class MapPainter {
 
         const terrain = view === 'terrain';
         this.paintBase();
-        this.roundCoastCorners();
+        this.smoothCoast();
         if (terrain) {
             this.relief = this.buildReliefHeights();
             this.reliefHeight = this.relief.height;

@@ -1,6 +1,6 @@
 import { createRandom } from '../core/random.js';
 import { ValueNoise } from '../core/value-noise.js';
-import { Terrain } from './constants.js';
+import { Terrain, BIOME_COUNT } from './constants.js';
 import { DEFAULTS } from './defaults.js';
 import { climate } from './steps/climate.js';
 import { elevation } from './steps/elevation.js';
@@ -48,6 +48,7 @@ export class MapGenerator {
         this.placeRareResources();
         this.placeRiverCrossings();
         this.buildRegions();
+        this.distributeWheat();
         this.placeSettlements();
         this.buildRoads();
         return this;
@@ -73,7 +74,11 @@ export class MapGenerator {
             ore: new ValueNoise(this.seed + 16),
             fault: new ValueNoise(this.seed + 17),
             shore: new ValueNoise(this.seed + 18),
-            iron: new ValueNoise(this.seed + 19)
+            iron: new ValueNoise(this.seed + 19),
+            coastDetail: new ValueNoise(this.seed + 20),
+            deadLand: new ValueNoise(this.seed + 21),
+            etherLand: new ValueNoise(this.seed + 22),
+            steppe: new ValueNoise(this.seed + 23)
         };
     }
 
@@ -159,7 +164,7 @@ export class MapGenerator {
             settlements: [],
             coastal: false,
             resources: [0, 0, 0, 0, 0, 0, 0],   // по кодам Resource (0 — клетки без ресурса)
-            biomes: [0, 0, 0, 0, 0, 0]    // по кодам Biome (без гор)
+            biomes: new Array(BIOME_COUNT).fill(0)    // по кодам Biome (без гор)
         };
         info.settlements = this.settlements.filter(s => s.regionId === regionId);
         for (const i of tiles) {

@@ -2,7 +2,10 @@
 
 export const Terrain = Object.freeze({ DEEP_WATER: 0, SHALLOW_WATER: 1, PLAIN: 2, MOUNTAIN: 3 });
 
-export const Biome = Object.freeze({ TUNDRA: 0, TAIGA: 1, GRASSLAND: 2, STEPPE: 3, DESERT: 4, SAVANNA: 5 });
+export const Biome = Object.freeze({ TUNDRA: 0, TAIGA: 1, GRASSLAND: 2, STEPPE: 3, DESERT: 4, SAVANNA: 5, DEAD_LAND: 6, ETHER_LAND: 7 });
+
+// Сколько всего биомов (для массивов-сводок по регионам).
+export const BIOME_COUNT = Object.keys(Biome).length;
 
 export const Shore = Object.freeze({ NONE: 0, BEACH: 1, ROCKY: 2, CLIFF: 3 });
 

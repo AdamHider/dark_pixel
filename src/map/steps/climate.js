@@ -40,6 +40,29 @@ export const climate = {
                 this.biome[i] = this.pickBiome(this.temperature[i], this.moisture[i]);
             }
         }
+        this.assignZones();
+    },
+
+    /* Особые зоны поверх обычных биомов (регулируются константами в defaults.js):
+       степи (широкие сухие травяные пространства), мёртвые земли (выжженные бесплодные пустоши)
+       и земли эфира (пятна, густо усыпанные кристаллами). Каждая зона — это отдельный шум-слой;
+       внутри «пятна» биом подменяется, поэтому зоны получаются крупными и цельными, а не отдельными клетками. */
+    assignZones() {
+        const o = this.options;
+        const steppe = o.steppeShare > 0 ? this.createDensityLayer(this.noise.steppe, o.zoneScale) : null;
+        const dead = o.deadLandShare > 0 ? this.createDensityLayer(this.noise.deadLand, o.zoneScale) : null;
+        const ether = o.etherLandShare > 0 ? this.createDensityLayer(this.noise.etherLand, o.etherLandScale) : null;
+
+        for (const i of this.landTiles) {
+            if (this.terrain[i] !== Terrain.PLAIN) continue;
+            if (ether && ether[i] > 1 - o.etherLandShare) {
+                this.biome[i] = Biome.ETHER_LAND;           // земли эфира перекрывают всё: тут не растёт ничего живого
+            } else if (dead && dead[i] > 1 - o.deadLandShare && this.moisture[i] < o.deadLandMoisture) {
+                this.biome[i] = Biome.DEAD_LAND;            // мёртвые земли — в сухих краях
+            } else if (steppe && this.biome[i] === Biome.GRASSLAND && steppe[i] > 1 - o.steppeShare) {
+                this.biome[i] = Biome.STEPPE;               // дополнительные степи вместо обычного луга
+            }
+        }
     },
 
     pickBiome(temperature, moisture) {

@@ -67,7 +67,8 @@
 
   // src/map/constants.js
   var Terrain = Object.freeze({ DEEP_WATER: 0, SHALLOW_WATER: 1, PLAIN: 2, MOUNTAIN: 3 });
-  var Biome = Object.freeze({ TUNDRA: 0, TAIGA: 1, GRASSLAND: 2, STEPPE: 3, DESERT: 4, SAVANNA: 5 });
+  var Biome = Object.freeze({ TUNDRA: 0, TAIGA: 1, GRASSLAND: 2, STEPPE: 3, DESERT: 4, SAVANNA: 5, DEAD_LAND: 6, ETHER_LAND: 7 });
+  var BIOME_COUNT = Object.keys(Biome).length;
   var Shore = Object.freeze({ NONE: 0, BEACH: 1, ROCKY: 2, CLIFF: 3 });
   var Resource = Object.freeze({ NONE: 0, WOOD: 1, WHEAT: 2, GOLD: 3, ETHER: 4, IRON: 5, SETTLEMENT: 6 });
   var ResourceInfo = Object.freeze({
@@ -128,10 +129,29 @@
     // масштаб «скручивания» координат (делает берега и хребты извилистыми)
     warpStrength: 0.25,
     // сила скручивания; 0 — выключить
+    coastDetailScale: 9,
+    // масштаб мелкой изрезанности берега (больше — мельче заливы и мысы)
+    coastDetail: 0.12,
+    // 0..1: насколько мелкий шум изрезает береговую линию (0 — гладкие берега)
     minMountainSize: 4,
     // горные массивы меньше этого размера (в клетках) превращаются в равнину
     minIslandSize: 12,
     // клочки суши меньше этого размера (в клетках) превращаются в воду
+    // --- зоны (степи, мёртвые земли, земли эфира) ---
+    zoneScale: 4,
+    // масштаб крупных «пятен» зон (больше — мельче и чаще пятна)
+    steppeShare: 0,
+    // доля карты под дополнительными степями (0 — степи только в обычных сухих местах)
+    deadLandShare: 0.05,
+    // доля карты под мёртвыми землями
+    deadLandMoisture: 0.35,
+    // влажность, ниже которой мёртвые земли не появляются (растут в сухих краях)
+    etherLandScale: 3,
+    // масштаб пятен эфирных земель
+    etherLandShare: 0.04,
+    // доля карты под эфирными землями
+    etherLandDensity: 0.55,
+    // плотность эфира внутри эфирных земель (0..1)
     // --- климат ---
     temperatureScale: 4,
     temperatureNoise: 0.35,
@@ -200,10 +220,14 @@
     // население клетки, с которого начинается уровень 1
     settlementTileGrowth: 1.5,
     // во сколько раз надо увеличить население клетки, чтобы уровень вырос на 1
+    settlementsPerRegionMax: 3,
+    // не больше стольких групп поселений в одном регионе
     secondSettlementPopulation: 900,
     // у региона с таким населением и больше будет вторая группа
     settlementSpacing: 2,
     // минимум клеток между группами поселений
+    wheatMinPerRegion: 2,
+    // в каждом подходящем регионе — не меньше стольких полей (равномерность)
     // --- дороги между поселениями ---
     roads: true,
     roadNeighbors: 3,
@@ -269,6 +293,27 @@
           this.biome[i] = this.pickBiome(this.temperature[i], this.moisture[i]);
         }
       }
+      this.assignZones();
+    },
+    /* Особые зоны поверх обычных биомов (регулируются константами в defaults.js):
+       степи (широкие сухие травяные пространства), мёртвые земли (выжженные бесплодные пустоши)
+       и земли эфира (пятна, густо усыпанные кристаллами). Каждая зона — это отдельный шум-слой;
+       внутри «пятна» биом подменяется, поэтому зоны получаются крупными и цельными, а не отдельными клетками. */
+    assignZones() {
+      const o = this.options;
+      const steppe = o.steppeShare > 0 ? this.createDensityLayer(this.noise.steppe, o.zoneScale) : null;
+      const dead = o.deadLandShare > 0 ? this.createDensityLayer(this.noise.deadLand, o.zoneScale) : null;
+      const ether = o.etherLandShare > 0 ? this.createDensityLayer(this.noise.etherLand, o.etherLandScale) : null;
+      for (const i of this.landTiles) {
+        if (this.terrain[i] !== Terrain.PLAIN) continue;
+        if (ether && ether[i] > 1 - o.etherLandShare) {
+          this.biome[i] = Biome.ETHER_LAND;
+        } else if (dead && dead[i] > 1 - o.deadLandShare && this.moisture[i] < o.deadLandMoisture) {
+          this.biome[i] = Biome.DEAD_LAND;
+        } else if (steppe && this.biome[i] === Biome.GRASSLAND && steppe[i] > 1 - o.steppeShare) {
+          this.biome[i] = Biome.STEPPE;
+        }
+      }
     },
     pickBiome(temperature, moisture) {
       const dry = this.options.aridity;
@@ -305,6 +350,8 @@
           let height = baseNoise * 0.9 + o.baseElevation - falloff;
           const shapeNoise = this.noise.shape.fractal(wx * o.shapeScale, wy * o.shapeScale, 3);
           height += (shapeNoise - 0.5) * o.shapeVariety * 2.4;
+          const coastNoise = this.noise.coastDetail.fractal(wx * o.coastDetailScale, wy * o.coastDetailScale, 3);
+          height += (coastNoise - 0.5) * o.coastDetail * 2.4;
           const basinNoise = this.noise.basin.fractal(wx * o.inlandSeaScale, wy * o.inlandSeaScale, 2);
           height -= Math.max(0, basinNoise - 0.5) * 4 * o.inlandSeaStrength * clamp(1.3 - distanceSq);
           const ridgeNoise = this.noise.ridge.fractal(wx * o.ridgeScale, wy * o.ridgeScale, 4);
@@ -595,6 +642,7 @@
       const fields = this.createPatchLayer(this.noise.fertility, o.wheatScale, o.wheatShare, this.noise.fertilityClumps, o.clumpScale, o.wheatClumpShare);
       for (const i of this.landTiles) {
         if (this.terrain[i] !== Terrain.PLAIN) continue;
+        if (this.biome[i] === Biome.DEAD_LAND || this.biome[i] === Biome.ETHER_LAND) continue;
         const t = this.temperature[i];
         const m = this.moisture[i];
         const roll = this.random();
@@ -603,6 +651,44 @@
         if (goodForWood && roll < o.woodChance) this.resource[i] = Resource.WOOD;
         else if (goodForWheat && roll < o.wheatChance) this.resource[i] = Resource.WHEAT;
       }
+    },
+    /* Поля раскладываем ещё и «по одному на регион» (после того как регионы построены): регионам, где пшеницы мало,
+       добавляем поля в самых подходящих клетках. Так пшеница есть по всей карте, а не только там, где удачно лёг шум. */
+    distributeWheat() {
+      const o = this.options;
+      if (o.wheatMinPerRegion <= 0) return;
+      const fields = this.createPatchLayer(this.noise.fertility, o.wheatScale, o.wheatShare, this.noise.fertilityClumps, o.clumpScale, o.wheatClumpShare);
+      const byRegion = /* @__PURE__ */ new Map();
+      for (const i of this.landTiles) {
+        const id = this.regionId[i];
+        if (id < 0) continue;
+        if (!byRegion.has(id)) byRegion.set(id, { have: 0, sites: [] });
+        const entry = byRegion.get(id);
+        if (this.resource[i] === Resource.WHEAT) {
+          entry.have++;
+          continue;
+        }
+        if (this.isWheatSite(i)) entry.sites.push(i);
+      }
+      const ordered = [...byRegion.values()].filter((entry) => entry.have < o.wheatMinPerRegion);
+      ordered.sort((a, b) => a.have - b.have);
+      for (const entry of ordered) {
+        entry.sites.sort((a, b) => this.wheatScore(b, fields) - this.wheatScore(a, fields) || this.random() - 0.5);
+        for (const i of entry.sites) {
+          if (entry.have >= o.wheatMinPerRegion) break;
+          this.resource[i] = Resource.WHEAT;
+          entry.have++;
+        }
+      }
+    },
+    // Насколько клетка хороша под поле: плодородие, умеренная влага, близость реки.
+    wheatScore(i, fields) {
+      const wet = this.neighbors(i).some((j) => this.river[j] > 0);
+      return (fields ? fields[i] : 0) * 0.8 + (1 - Math.abs(this.moisture[i] - 0.55)) * 0.6 + (1 - Math.abs(this.temperature[i] - 0.55)) * 0.4 + (wet ? 0.3 : 0);
+    },
+    // Подходит ли клетка под поле: равнина, не река, свободна, тёплый умеренный климат и не мёртвая/эфирная земля.
+    isWheatSite(i) {
+      return this.terrain[i] === Terrain.PLAIN && this.river[i] === 0 && this.resource[i] === Resource.NONE && this.biome[i] !== Biome.DEAD_LAND && this.biome[i] !== Biome.ETHER_LAND && this.biome[i] !== Biome.TUNDRA && this.biome[i] !== Biome.DESERT && this.temperature[i] > 0.18 && this.temperature[i] < 0.85 && this.moisture[i] > 0.1 && this.moisture[i] < 0.9;
     },
     // «Пятна» ресурса: крупные скопления плюс мелкие разрозненные кучки. Вместе дают хаотичное, но не пустое распределение.
     createPatchLayer(bigNoise, bigScale, bigShare, smallNoise, smallScale, smallShare) {
@@ -681,6 +767,12 @@
       for (const i of this.landTiles) {
         if (this.river[i] || this.resource[i] !== Resource.NONE) continue;
         if (faults[i] > 1 - o.etherShare && this.random() < o.etherChance) this.resource[i] = Resource.ETHER;
+      }
+      if (o.etherLandShare > 0 && o.etherLandDensity > 0) {
+        for (const i of this.landTiles) {
+          if (this.biome[i] !== Biome.ETHER_LAND || this.river[i] || this.resource[i] !== Resource.NONE) continue;
+          if (this.random() < o.etherLandDensity) this.resource[i] = Resource.ETHER;
+        }
       }
     },
     createFaultLayer() {
@@ -966,24 +1058,37 @@
         (tilesByRegion[id] ||= []).push(i);
         sums[id] = (sums[id] || 0) + habitability[i];
       }
-      const candidates = [];
+      const regions2 = [];
       for (const key of Object.keys(sums)) {
         const id = Number(key);
         const gauss = (this.random() + this.random() + this.random() - 1.5) / 0.5;
         const population = Math.round(sums[id] * o.populationPerHabitability * Math.exp(gauss * o.populationVariation));
         this.regionPopulation[id] = population;
-        if (population >= o.settlementMinPopulation) candidates.push({ regionId: id, population });
+        if (population < o.settlementMinPopulation) continue;
+        let groups = clamp(
+          1 + Math.floor(Math.log(population / o.settlementMinPopulation) / Math.log(o.settlementGroupGrowth)),
+          1,
+          o.settlementsPerRegionMax
+        );
+        if (population >= o.secondSettlementPopulation) groups = Math.max(2, groups);
+        regions2.push({ regionId: id, population, groups, placed: 0, perGroup: Math.max(1, Math.round(population / groups)) });
       }
-      candidates.sort((a, b) => b.population - a.population);
+      regions2.sort((a, b) => b.population - a.population);
       const blocked = new Uint8Array(this.terrain.length);
-      for (const candidate of candidates) {
-        const shares = candidate.population >= o.secondSettlementPopulation ? [0.62, 0.38] : [1];
-        for (const share of shares) {
-          const population = Math.round(candidate.population * share);
-          if (population < o.settlementMinPopulation) continue;
-          const group = this.growSettlementGroup(candidate.regionId, tilesByRegion[candidate.regionId], habitability, blocked, population);
-          if (group) this.commitSettlementGroup(group, population, blocked);
+      for (let round = 0; round < o.settlementsPerRegionMax; round++) {
+        let placedAny = false;
+        for (const region of regions2) {
+          if (region.placed >= region.groups) continue;
+          const group = this.growSettlementGroup(region.regionId, tilesByRegion[region.regionId], habitability, blocked, region.perGroup);
+          if (!group) {
+            region.groups = region.placed;
+            continue;
+          }
+          this.commitSettlementGroup(group, region.perGroup, blocked);
+          region.placed++;
+          placedAny = true;
         }
+        if (!placedAny) break;
       }
     },
     // Уровень клетки (1..settlementMaxLevel) по её населению: каждое увеличение в settlementTileGrowth раз добавляет уровень.
@@ -994,7 +1099,7 @@
     },
     // Подходит ли клетка под поселение.
     isSettlementSite(i, regionId, habitability, blocked) {
-      return this.terrain[i] === Terrain.PLAIN && !this.river[i] && !blocked[i] && habitability[i] > 0 && this.regionId[i] === regionId && this.shore[i] !== Shore.CLIFF && ![Resource.GOLD, Resource.IRON, Resource.ETHER, Resource.SETTLEMENT].includes(this.resource[i]);
+      return this.terrain[i] === Terrain.PLAIN && !this.river[i] && !blocked[i] && habitability[i] > 0 && this.biome[i] !== Biome.DEAD_LAND && this.biome[i] !== Biome.ETHER_LAND && this.regionId[i] === regionId && this.shore[i] !== Shore.CLIFF && ![Resource.GOLD, Resource.IRON, Resource.ETHER, Resource.SETTLEMENT, Resource.WHEAT].includes(this.resource[i]);
     },
     // Выбирает лучшую клетку региона и наращивает вокруг неё группу из соседних клеток (до settlementMaxGroup).
     growSettlementGroup(regionId, regionTiles, habitability, blocked, population) {
@@ -1070,7 +1175,9 @@
         [Biome.STEPPE]: 0.6,
         [Biome.TAIGA]: 0.55,
         [Biome.TUNDRA]: 0.15,
-        [Biome.DESERT]: 0.1
+        [Biome.DESERT]: 0.1,
+        [Biome.DEAD_LAND]: 0.03,
+        [Biome.ETHER_LAND]: 0.05
       };
       const habitability = new Float32Array(this.terrain.length);
       for (const i of this.landTiles) {
@@ -1233,6 +1340,7 @@
       this.placeRareResources();
       this.placeRiverCrossings();
       this.buildRegions();
+      this.distributeWheat();
       this.placeSettlements();
       this.buildRoads();
       return this;
@@ -1257,7 +1365,11 @@
         ore: new ValueNoise(this.seed + 16),
         fault: new ValueNoise(this.seed + 17),
         shore: new ValueNoise(this.seed + 18),
-        iron: new ValueNoise(this.seed + 19)
+        iron: new ValueNoise(this.seed + 19),
+        coastDetail: new ValueNoise(this.seed + 20),
+        deadLand: new ValueNoise(this.seed + 21),
+        etherLand: new ValueNoise(this.seed + 22),
+        steppe: new ValueNoise(this.seed + 23)
       };
     }
     allocateLayers() {
@@ -1336,7 +1448,7 @@
         coastal: false,
         resources: [0, 0, 0, 0, 0, 0, 0],
         // по кодам Resource (0 — клетки без ресурса)
-        biomes: [0, 0, 0, 0, 0, 0]
+        biomes: new Array(BIOME_COUNT).fill(0)
         // по кодам Biome (без гор)
       };
       info2.settlements = this.settlements.filter((s) => s.regionId === regionId);
@@ -1768,7 +1880,7 @@
       name: "\u0412\u0435\u0441\u043D\u0430",
       tempShift: 0.02,
       palette: {
-        biome: ["#b2bfa8", "#557650", "#7fab5c", "#a9ac68", "#d1bd86", "#a5a55c"],
+        biome: ["#b2bfa8", "#557650", "#7fab5c", "#a9ac68", "#d1bd86", "#a5a55c", "#8f897b", "#6f5a86"],
         rock: "#787780",
         water: ["#58a0bd", "#4a8ba8", "#3d7592", "#325f79", "#284d63"],
         ice: ["#d9e8ee", "#c5d9e3", "#adc6d3"],
@@ -1790,7 +1902,7 @@
       name: "\u041B\u0435\u0442\u043E",
       tempShift: 0.08,
       palette: {
-        biome: ["#a9b5a4", "#4b6a47", "#6e9350", "#b3a76a", "#d0bb82", "#a99b58"],
+        biome: ["#a9b5a4", "#4b6a47", "#6e9350", "#b3a76a", "#d0bb82", "#a99b58", "#8d8779", "#6a5580"],
         rock: "#77757d",
         water: ["#4f95b3", "#41809e", "#346a87", "#2a566f", "#21445a"],
         ice: ["#d9e8ee", "#c5d9e3", "#adc6d3"],
@@ -1812,7 +1924,7 @@
       name: "\u041E\u0441\u0435\u043D\u044C",
       tempShift: -0.08,
       palette: {
-        biome: ["#aaa38a", "#4a6046", "#88904c", "#b8975a", "#caa877", "#a68b4e"],
+        biome: ["#aaa38a", "#4a6046", "#88904c", "#b8975a", "#caa877", "#a68b4e", "#8a8274", "#665079"],
         rock: "#76737a",
         water: ["#4a8199", "#3d6d85", "#315971", "#28485d", "#1f394b"],
         ice: ["#d9e8ee", "#c5d9e3", "#adc6d3"],
@@ -1834,7 +1946,7 @@
       name: "\u0417\u0438\u043C\u0430",
       tempShift: -0.2,
       palette: {
-        biome: ["#c9d1d4", "#3f5847", "#7a8262", "#a3987a", "#c7b38b", "#978760"],
+        biome: ["#c9d1d4", "#3f5847", "#7a8262", "#a3987a", "#c7b38b", "#978760", "#9a978f", "#7a6d8e"],
         rock: "#6f6e78",
         water: ["#4a7a94", "#3d6780", "#31546b", "#274456", "#1e3646"],
         ice: ["#d7e6ed", "#c2d6e0", "#a9c3d1"],
@@ -1979,6 +2091,8 @@
       const W = this.width;
       const pixels = this.pixels;
       const { colors, water } = this.buildTileColors();
+      this.tileColors = colors;
+      this.tileWater = water;
       const smooth = this.view !== "regions";
       const quadOf = this.blendGrid().quadOf;
       const quadColors = new Int32Array(16);
@@ -2104,51 +2218,95 @@
       }
       return true;
     },
-    /* Скругление берега: выпуклый пиксель суши, у которого вода с двух соседних сторон (а с двух других — суша), —
-       «прямой угол» ступеньки. Такие пиксели заменяем цветом соседней воды; за несколько проходов углы становятся округлыми. */
-    roundCoastCorners() {
-      const passes = this.options.roundCoast;
-      if (!passes) return;
+    /* Сглаживание берега.
+       Маска «суша/вода» размывается на уровне клеток, поэтому линия берега перестаёт идти по границам клеток:
+       выпуклые прямые углы скругляются, а между береговыми клетками появляются плавные заливы и мысы.
+       Размытое поле интерполируется по пикселям, и берег проводится по его середине — с узкой дизеринг-каймой
+       для мягкой кромки. */
+    smoothCoast() {
+      if (this.view !== "terrain" || !this.map.landTiles || this.options.coastSmoothing === false) return;
       const map = this.map;
       const size = map.size;
       const T = this.tileSize;
       const W = this.width;
       const pixels = this.pixels;
       const water = this.waterMask;
-      const coastTiles = [];
-      for (let ty = 0; ty < size; ty++) {
-        for (let tx = 0; tx < size; tx++) {
-          let land = false, wet = false;
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              const nx = tx + dx, ny = ty + dy;
-              if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
-              if (map.isLand(ny * size + nx)) land = true;
-              else wet = true;
+      const axis = this.axis;
+      const { first, second, fraction } = axis;
+      const colors = this.tileColors, tileWater = this.tileWater;
+      if (!colors) return;
+      let field = new Float32Array(size * size);
+      for (let i = 0; i < field.length; i++) field[i] = tileWater[i] ? 1 : 0;
+      const blur = (source) => {
+        const out = new Float32Array(source.length);
+        for (let y = 0; y < size; y++) {
+          for (let x = 0; x < size; x++) {
+            let sum = 0, count = 0;
+            for (let dy = -1; dy <= 1; dy++) {
+              for (let dx = -1; dx <= 1; dx++) {
+                const nx = x + dx, ny = y + dy;
+                if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+                sum += source[ny * size + nx];
+                count++;
+              }
             }
+            out[y * size + x] = sum / count;
           }
-          if (land && wet) coastTiles.push(ty * size + tx);
         }
-      }
-      for (let pass = 0; pass < passes; pass++) {
-        const changes = [];
-        for (const tile of coastTiles) {
-          const x0 = tile % size * T, y0 = Math.floor(tile / size) * T;
-          for (let gy = y0; gy < y0 + T; gy++) {
-            for (let gx = x0; gx < x0 + T; gx++) {
-              const k = gy * W + gx;
-              if (water[k]) continue;
-              const left = gx > 0 && water[k - 1], right = gx < W - 1 && water[k + 1];
-              const up = gy > 0 && water[k - W], down = gy < W - 1 && water[k + W];
-              if ((left || right) && (up || down) && !(left && right) && !(up && down)) {
-                changes.push(k, left ? k - 1 : k + 1);
+        return out;
+      };
+      field = blur(blur(field));
+      const waterColorOf = /* @__PURE__ */ new Map(), landColorOf = /* @__PURE__ */ new Map();
+      const nearestColor = (tile, cache, wantLand) => {
+        if (cache.has(tile)) return cache.get(tile);
+        let color = colors[tile];
+        const x = tile % size, y = Math.floor(tile / size);
+        for (let radius = 1; radius <= 3; radius++) {
+          let found = -1;
+          for (let dy = -radius; dy <= radius && found < 0; dy++) {
+            for (let dx = -radius; dx <= radius; dx++) {
+              const nx = x + dx, ny = y + dy;
+              if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+              if ((tileWater[ny * size + nx] ? false : true) === wantLand) {
+                found = ny * size + nx;
+                break;
               }
             }
           }
+          if (found >= 0) {
+            color = colors[found];
+            break;
+          }
         }
-        for (let c = 0; c < changes.length; c += 2) {
-          pixels[changes[c]] = pixels[changes[c + 1]];
-          water[changes[c]] = 1;
+        cache.set(tile, color);
+        return color;
+      };
+      const shallow = this.packed.waterShades[0];
+      for (let ty = 0; ty < size; ty++) {
+        for (let tx = 0; tx < size; tx++) {
+          const baseWater = tileWater[ty * size + tx] ? 1 : 0;
+          const tile = ty * size + tx;
+          const x0 = tx * T, y0 = ty * T;
+          for (let gy = y0; gy < y0 + T; gy++) {
+            const r0 = first[gy] * size, r1 = second[gy] * size, v = fraction[gy];
+            for (let gx = x0; gx < x0 + T; gx++) {
+              const u = fraction[gx];
+              const a = field[r0 + first[gx]], b = field[r0 + second[gx]];
+              const c = field[r1 + first[gx]], d = field[r1 + second[gx]];
+              const topRow = a + (b - a) * u;
+              const fv = topRow + (c + (d - c) * u - topRow) * v;
+              const newWater = fv > 0.5 ? 1 : 0;
+              if (newWater === baseWater) continue;
+              const k = gy * W + gx;
+              if (newWater) {
+                pixels[k] = mixPacked(nearestColor(tile, waterColorOf, false), shallow, 0.6);
+                water[k] = 1;
+              } else {
+                pixels[k] = nearestColor(tile, landColorOf, true);
+                water[k] = 0;
+              }
+            }
+          }
         }
       }
     }
@@ -2334,7 +2492,7 @@
       const size = map.size;
       const T = this.tileSize;
       const W = this.width;
-      const dryBiomes = [Biome.STEPPE, Biome.DESERT, Biome.SAVANNA, Biome.TUNDRA];
+      const dryBiomes = [Biome.STEPPE, Biome.DESERT, Biome.SAVANNA, Biome.TUNDRA, Biome.DEAD_LAND, Biome.ETHER_LAND];
       const flags = new Uint8Array(size * size);
       let eligible = 0;
       for (let i = 0; i < flags.length; i++) {
@@ -2563,11 +2721,39 @@
         const cx = x * T + Math.round(hashUnit(x, y, 951) * (T - 2)) + 1;
         const base2 = y * T + Math.round(hashUnit(x, y, 952) * (T - 4)) + 3;
         const dry = [Biome.STEPPE, Biome.DESERT, Biome.TUNDRA, Biome.SAVANNA].includes(map.biome[i]);
-        if (dry && roll < 0.014) items.push({ y: base2, x: cx, draw: () => this.drawBones(cx, base2) });
+        if (map.biome[i] === Biome.ETHER_LAND) {
+          if (roll < 0.06) items.push({ y: base2, x: cx, draw: () => this.drawShard(cx, base2) });
+        } else if (map.biome[i] === Biome.DEAD_LAND) {
+          if (roll < 0.05) items.push({ y: base2, x: cx, draw: () => this.drawBones(cx, base2) });
+          else if (roll < 0.09) items.push({ y: base2, x: cx, draw: () => this.drawCharredStump(cx, base2) });
+        } else if (dry && roll < 0.014) items.push({ y: base2, x: cx, draw: () => this.drawBones(cx, base2) });
         else if (!dry && roll < 6e-3) items.push({ y: base2, x: cx, draw: () => this.drawCrow(cx, base2) });
         else if (roll > 0.994 && roll <= 0.9985) items.push({ y: base2, x: cx, draw: () => this.drawRuin(cx, base2, x, y) });
         else if (roll > 0.9985) items.push({ y: base2, x: cx, draw: () => this.drawGibbet(cx, base2) });
       });
+    },
+    // Обугленный пень — мёртвое дерево, оставшееся после пожара или скверны.
+    drawCharredStump(cx, base2) {
+      const dark = packRgb(38, 32, 30), ash = packRgb(78, 70, 66);
+      this.drawShadow(cx, base2, this.px(5));
+      this.rect(cx - 1, base2 - this.px(3), this.px(3), this.px(3), dark);
+      this.put(cx - 1, base2 - this.px(3), ash);
+      this.put(cx + this.px(2), base2 - this.px(4), dark);
+      this.put(cx - this.px(2), base2 - this.px(2), dark);
+      this.put(cx + 1, base2 - this.px(5), dark);
+    },
+    // Осколок эфирного кристалла, торчащий из земли (без свечения — оно рисуется у ресурса эфира).
+    drawShard(cx, base2) {
+      const light = packRgb(196, 150, 244), mid = packRgb(140, 78, 214), dark = packRgb(78, 36, 132);
+      const height = this.px(3) + (hashUnit(cx, base2, 954) < 0.5 ? 1 : 2);
+      this.drawShadow(cx, base2, this.px(3));
+      for (let row = 0; row < height; row++) {
+        const half = row === 0 ? 0 : 1;
+        this.rect(cx - half, base2 - row, half + 1, 1, light);
+        this.put(cx + half, base2 - row, dark);
+        this.put(cx, base2 - row, mid);
+      }
+      this.put(cx, base2 - height, light);
     },
     drawBones(cx, base2) {
       const bone = this.colors.bone;
@@ -2631,12 +2817,15 @@
       const { first, second, fraction } = this.axis;
       const broad = new LatticeNoise(W, Math.max(6, this.px(34)), 501 + this.seedSalt);
       const fine = new LatticeNoise(W, Math.max(4, this.px(16)), 502 + this.seedSalt);
+      const fine2 = new LatticeNoise(W, Math.max(3, this.px(9)), 504 + this.seedSalt);
       const warp = new LatticeNoise(W, Math.max(6, this.px(26)), 503 + this.seedSalt);
+      const grain = new LatticeNoise(W, Math.max(3, this.px(6)), 505 + this.seedSalt);
       const crestWeight = 0.2 + 0.4 * sharp;
       const crestPower = 1 + 2.5 * sharp;
       const powerTable = (power) => Float32Array.from({ length: 256 }, (_, n) => Math.pow(n / 255, power));
       const coarseTable = powerTable(crestPower);
       const fineTable = powerTable(1 + 2 * sharp);
+      const fineTable2 = powerTable(0.7 + 1.6 * sharp);
       const wrap = this.px(18);
       for (const tile of zone) {
         const tx = tile % size, ty = Math.floor(tile / size);
@@ -2654,8 +2843,10 @@
             const wy = Math.min(W - 1, Math.max(0, gy - shift));
             const crestA = coarseTable[Math.round((1 - Math.abs(2 * broad.at(wx, wy) - 1)) * 255)];
             const crestB = fineTable[Math.round((1 - Math.abs(2 * fine.at(wx, wy) - 1)) * 255)];
-            const crest = 0.7 * crestA + 0.3 * crestB;
-            const h = base2 * (1 - crestWeight + crestWeight * 1.7 * crest);
+            const crestC = fineTable2[Math.round((1 - Math.abs(2 * fine2.at(wx, wy) - 1)) * 255)];
+            const crest = 0.58 * crestA + 0.26 * crestB + 0.16 * crestC;
+            const rugged = 1 + (grain.at(gx, gy) - 0.5) * 0.28;
+            const h = base2 * (1 - crestWeight + crestWeight * 1.7 * crest) * rugged;
             height[gy * W + gx] = Math.round(clamp(h) * 255);
           }
         }
@@ -2767,7 +2958,10 @@
           if (raw >= 41) {
             const northWest = k > W + 1 ? height[k - W - 1] : raw;
             const southEast = k < last - W - 1 ? height[k + W + 1] : raw;
-            let tone = Math.round(2 + (southEast - northWest) * (20 / 255) + (h - 0.45) * 2.6 + (threshold - 0.5) * 0.35);
+            const west = k > 0 ? height[k - 1] : raw;
+            const east = k < last ? height[k + 1] : raw;
+            const crease = ((west + east) * 0.5 - raw) * (3 / 255);
+            let tone = Math.round(2 + (southEast - northWest) * (20 / 255) + (h - 0.45) * 2.6 + (threshold - 0.5) * 0.35 - Math.min(1.3, Math.max(0, crease)));
             tone = tone < 0 ? 0 : tone > 4 ? 4 : tone;
             const palette = h + (threshold - 0.5) * 0.08 > snowLevel ? snowRamp : ramp;
             color = palette[tone];
@@ -3048,31 +3242,58 @@
       }
     },
     // Переправа: каменный мост (река глубже 1) или брод из камней (ручей). Рисуется поперёк течения.
+    // Длину и центр берём по настоящим пикселям реки в клетке, поэтому мост всегда лежит от берега до берега.
     paintCrossing(x, y, i) {
       const map = this.map;
       const T = this.tileSize;
+      const W = this.width;
       const c = this.colors;
+      const mask = this.riverMask;
       const to = map.riverTo[i];
       const flowX = to === -1 ? 0 : to % map.size - x;
       const flowY = to === -1 ? 0 : Math.floor(to / map.size) - y;
       const horizontalFlow = to === -1 ? x > 0 && x < map.size - 1 && map.river[i - 1] > 0 && map.river[i + 1] > 0 : Math.abs(flowX) >= Math.abs(flowY);
-      const put = (a, b, w, h, color) => horizontalFlow ? this.rect(x * T + a, y * T + b, w, h, color) : this.rect(x * T + b, y * T + a, h, w, color);
+      const left = x * T, top = y * T;
+      let minAcross = Infinity, maxAcross = -Infinity, sumAlong = 0, count = 0;
+      if (mask) {
+        for (let gy = top; gy < top + T; gy++) {
+          for (let gx = left; gx < left + T; gx++) {
+            if (!mask[gy * W + gx]) continue;
+            const along = horizontalFlow ? gx : gy;
+            const across = horizontalFlow ? gy : gx;
+            if (across < minAcross) minAcross = across;
+            if (across > maxAcross) maxAcross = across;
+            sumAlong += along;
+            count++;
+          }
+        }
+      }
       const middle = Math.floor(T / 2);
-      const river = this.riverWidthAt(i);
+      if (count === 0) {
+        const center = (horizontalFlow ? top : left) + middle;
+        minAcross = center - this.riverWidthAt(i) / 2;
+        maxAcross = center + this.riverWidthAt(i) / 2;
+        sumAlong = (horizontalFlow ? left : top) + middle;
+        count = 1;
+      }
+      const put = (a, b, w, h, color) => horizontalFlow ? this.rect(a, b, w, h, color) : this.rect(b, a, h, w, color);
+      const bank = Math.max(1, this.px(2));
+      const centerAlong = Math.round(sumAlong / count);
+      const acrossFrom = Math.round(minAcross) - bank;
+      const acrossTo = Math.round(maxAcross) + bank;
+      const span = acrossTo - acrossFrom + 1;
       if (map.crossing[i] === 2) {
-        const length = Math.min(T, river + this.px(4));
         const thickness = this.px(5);
-        const a0 = middle - (thickness >> 1);
-        const b0 = middle - (length >> 1);
-        put(a0, b0, thickness, length, c.bridgeDeck);
-        put(a0, b0, 1, length, c.bridgeEdge);
-        put(a0 + thickness - 1, b0, 1, length, c.bridgeEdge);
+        const a0 = centerAlong - (thickness >> 1);
+        put(a0, acrossFrom, thickness, span, c.bridgeDeck);
+        put(a0, acrossFrom, 1, span, c.bridgeEdge);
+        put(a0 + thickness - 1, acrossFrom, 1, span, c.bridgeEdge);
       } else {
-        const stones = 3;
+        const stones = Math.max(2, Math.min(5, Math.round(span / this.px(3))));
         for (let k = 0; k < stones; k++) {
-          const b = middle - (river >> 1) + Math.round(k * (river - 2) / (stones - 1)) - 1;
-          put(middle - 1, b, 2, 2, c.stone);
-          put(middle, b + 1, 1, 1, c.stoneShadow);
+          const b = acrossFrom + Math.round(k * (span - 2) / (stones - 1));
+          put(centerAlong - 1, b, 2, 2, c.stone);
+          put(centerAlong, b + 1, 1, 1, c.stoneShadow);
         }
       }
     }
@@ -3824,7 +4045,7 @@
     // Внутри одного биома цвет зависит от плодородия: влажные места гуще и темнее, сухие светлее и желтее.
     fertilityTint(i, color) {
       const biome = this.map.biome[i];
-      if (biome === Biome.TUNDRA || biome === Biome.DESERT) return color;
+      if (biome === Biome.TUNDRA || biome === Biome.DESERT || biome === Biome.DEAD_LAND || biome === Biome.ETHER_LAND) return color;
       const wet = this.nearRiver(i) ? 0.3 : 0;
       const moisture = Math.round(Math.min(1, this.map.moisture[i] + wet) * 5) / 5;
       return moisture > 0.5 ? shadePacked(color, -0.16 * (moisture - 0.5) / 0.5) : mixPacked(color, this.colors.hay, 0.32 * (0.5 - moisture) / 0.5);
@@ -3876,11 +4097,15 @@
       const trunkHeight = this.px(2) + 1;
       const trunkWidth = width >= 7 ? 2 : 1;
       const color = hexToPacked(pal.broadleaf[pick % pal.broadleaf.length]);
-      const light = shadePacked(color, 0.22);
-      const dark = shadePacked(color, -0.28);
+      const light = shadePacked(color, 0.26);
+      const highlight = shadePacked(color, 0.44);
+      const dark = shadePacked(color, -0.26);
+      const deep = shadePacked(color, -0.46);
       const top = base2 - trunkHeight - height + 2;
       this.drawShadow(cx, base2, width);
       this.rect(cx - (trunkWidth >> 1), base2 - trunkHeight, trunkWidth, trunkHeight, this.packed.trunk);
+      this.put(cx - (trunkWidth >> 1) - 1, base2 - 1, this.packed.trunk);
+      this.put(cx + (trunkWidth >> 1), base2 - 1, this.packed.trunk);
       for (let row = 0; row < height; row++) {
         const t = (row + 0.5) / height * 2 - 1;
         const half = width / 2 * Math.sqrt(1 - t * t);
@@ -3888,11 +4113,14 @@
         const x1 = Math.round(cx + half) - 1;
         for (let x = x0; x <= x1; x++) {
           const lean = x - cx + (row - height / 2);
-          let shade = lean < -width * 0.2 ? light : lean > width * 0.28 ? dark : color;
-          if (hashUnit(x, top + row, 77) < 0.12) shade = shade === dark ? color : dark;
+          let shade = lean < -width * 0.22 ? light : lean > width * 0.3 ? deep : lean > width * 0.1 ? dark : color;
+          if (hashUnit(x, top + row, 77) < 0.14) shade = shade === light || shade === highlight ? color : dark;
           this.put(x, top + row, shade);
         }
       }
+      this.put(cx - 1, top + 1, highlight);
+      this.put(cx - 2, top + 2, highlight);
+      if (width >= 7) this.put(cx, top + 1, light);
       if (pal.blossom && pick % 3 === 0) {
         const blossom = hexToPacked(pal.blossom);
         this.put(cx - 2, top + 2, blossom);
@@ -3903,9 +4131,13 @@
     // Голое дерево (зима): ствол и несколько веток.
     drawBareTree(cx, base2, pick) {
       const trunk = this.packed.trunk;
+      const bark = shadePacked(this.packed.trunk, -0.28);
       const height = this.px(8);
       this.drawShadow(cx, base2, this.px(5));
       this.rect(cx, base2 - height, 1, height, trunk);
+      this.put(cx - 1, base2 - height + 2, bark);
+      this.put(cx - 1, base2 - 1, trunk);
+      this.put(cx + 1, base2 - 1, trunk);
       const side = pick % 2 ? 1 : -1;
       for (let k = 1; k <= this.px(3); k++) {
         this.put(cx - k, base2 - height + k + 1, trunk);
@@ -3916,29 +4148,37 @@
         this.put(cx + side * 2, base2 - height + 2, trunk);
         this.put(cx - side * 2, base2 - height + 4, trunk);
         this.put(cx + side, base2 - height + 5, trunk);
+      } else {
+        this.put(cx + side * 2, base2 - height + 3, trunk);
+        this.put(cx + side * 3, base2 - height + 2, trunk);
+        this.put(cx - side * 2, base2 - height + 5, trunk);
       }
     },
     // Ель: ярусы всё шире книзу; круглый год зелёная, зимой со снегом на лапах.
     drawConifer(cx, base2, pick, withSnow) {
       const pal = this.pal;
       const color = hexToPacked(pal.conifer[pick % pal.conifer.length]);
-      const light = shadePacked(color, 0.2);
-      const dark = shadePacked(color, -0.3);
+      const light = shadePacked(color, 0.24);
+      const dark = shadePacked(color, -0.34);
+      const deep = shadePacked(color, -0.5);
       const height = this.px(10) + pick % 2;
       const maxHalf = Math.max(2, Math.round(this.px(6) / 2));
       const trunkHeight = this.px(2);
       const top = base2 - trunkHeight - height + 1;
       this.drawShadow(cx, base2, this.px(6));
       this.rect(cx, base2 - trunkHeight, 1, trunkHeight, this.packed.trunk);
+      this.put(cx - 1, base2 - 1, this.packed.trunk);
+      this.put(cx + 1, base2 - 1, this.packed.trunk);
       for (let row = 0; row < height; row++) {
         const tierRow = row % 3;
         const half = Math.min(maxHalf, Math.floor(row * 0.34 + tierRow * 0.3 + 0.4));
         for (let dx = -half; dx <= half; dx++) {
-          let shade = dx < 0 ? light : dx > 0 ? dark : color;
+          let shade = dx < 0 ? light : dx > 0 ? dx === half ? deep : dark : color;
           if (withSnow && tierRow === 0) shade = dx > 0 ? this.packed.snowShade : this.packed.snow;
           this.put(cx + dx, top + row, shade);
         }
       }
+      this.put(cx, top, withSnow ? this.packed.snow : light);
     },
     // Поле: весной ростки, летом растёт, осенью спелые колосья, зимой стерня.
     drawWheat(x, y) {
@@ -3995,8 +4235,6 @@
         // домиков в клетке высшего уровня (если они помещаются)
         settlementOverflow: 0.25,
         // на сколько (доля клетки) основание дома может выйти за границу своей клетки
-        roundCoast: 1,
-        // сколько раз скруглять выпуклые прямые углы берега (0 — не скруглять)
         spriteOutline: false,
         // тёмный контур вокруг построек, руд и эфира (в стиле dark fantasy выключен)
         grade: true,
@@ -4038,7 +4276,7 @@
       this.buildAxisTables();
       const terrain2 = view === "terrain";
       this.paintBase();
-      this.roundCoastCorners();
+      this.smoothCoast();
       if (terrain2) {
         this.relief = this.buildReliefHeights();
         this.reliefHeight = this.relief.height;
@@ -4833,7 +5071,7 @@
 
   // src/ui/describe.js
   var TERRAIN_NAMES = ["\u0433\u043B\u0443\u0431\u043E\u043A\u0430\u044F \u0432\u043E\u0434\u0430", "\u043C\u0435\u043B\u043A\u043E\u0432\u043E\u0434\u044C\u0435", "\u0440\u0430\u0432\u043D\u0438\u043D\u0430", "\u0433\u043E\u0440\u0430"];
-  var BIOME_NAMES = ["\u0442\u0443\u043D\u0434\u0440\u0430", "\u0442\u0430\u0439\u0433\u0430", "\u0440\u0430\u0432\u043D\u0438\u043D\u0430", "\u0441\u0442\u0435\u043F\u044C", "\u043F\u0443\u0441\u0442\u044B\u043D\u044F", "\u0441\u0430\u0432\u0430\u043D\u043D\u0430"];
+  var BIOME_NAMES = ["\u0442\u0443\u043D\u0434\u0440\u0430", "\u0442\u0430\u0439\u0433\u0430", "\u0440\u0430\u0432\u043D\u0438\u043D\u0430", "\u0441\u0442\u0435\u043F\u044C", "\u043F\u0443\u0441\u0442\u044B\u043D\u044F", "\u0441\u0430\u0432\u0430\u043D\u043D\u0430", "\u043C\u0451\u0440\u0442\u0432\u044B\u0435 \u0437\u0435\u043C\u043B\u0438", "\u0437\u0435\u043C\u043B\u0438 \u044D\u0444\u0438\u0440\u0430"];
   var RESOURCE_NAMES = ["", "\u0434\u0435\u0440\u0435\u0432\u043E", "\u043F\u0448\u0435\u043D\u0438\u0446\u0430", "\u0437\u043E\u043B\u043E\u0442\u0430\u044F \u0440\u0443\u0434\u0430", "\u044D\u0444\u0438\u0440", "\u0436\u0435\u043B\u0435\u0437\u043D\u0430\u044F \u0440\u0443\u0434\u0430", "\u043F\u043E\u0441\u0435\u043B\u0435\u043D\u0438\u0435"];
   var CROSSING_NAMES = ["", "\u0431\u0440\u043E\u0434", "\u043A\u0430\u043C\u0435\u043D\u043D\u044B\u0439 \u043C\u043E\u0441\u0442"];
   function temperatureName(t) {

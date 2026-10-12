@@ -23,7 +23,7 @@ export const hills = {
         const size = map.size;
         const T = this.tileSize;
         const W = this.width;
-        const dryBiomes = [Biome.STEPPE, Biome.DESERT, Biome.SAVANNA, Biome.TUNDRA];
+        const dryBiomes = [Biome.STEPPE, Biome.DESERT, Biome.SAVANNA, Biome.TUNDRA, Biome.DEAD_LAND, Biome.ETHER_LAND];
 
         // Какие клетки подходят (1) и в каких ещё и овраги (3) — один раз, а не для каждого пикселя.
         const flags = new Uint8Array(size * size);

@@ -30,6 +30,11 @@ export const elevation = {
                 const shapeNoise = this.noise.shape.fractal(wx * o.shapeScale, wy * o.shapeScale, 3);
                 height += (shapeNoise - 0.5) * o.shapeVariety * 2.4;
 
+                // Мелкая изрезанность берега: ещё более частый шум добавляет мысы, бухточки и лагуны,
+                // чтобы линия берега не была «квадратной» даже на уровне отдельных клеток.
+                const coastNoise = this.noise.coastDetail.fractal(wx * o.coastDetailScale, wy * o.coastDetailScale, 3);
+                height += (coastNoise - 0.5) * o.coastDetail * 2.4;
+
                 // Внутренние моря: крупные впадины, вырезанные во внутренних областях.
                 const basinNoise = this.noise.basin.fractal(wx * o.inlandSeaScale, wy * o.inlandSeaScale, 2);
                 height -= Math.max(0, basinNoise - 0.5) * 4 * o.inlandSeaStrength * clamp(1.3 - distanceSq);

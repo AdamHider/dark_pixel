@@ -51,12 +51,17 @@ export const vegetation = {
         const trunkHeight = this.px(2) + 1;
         const trunkWidth = width >= 7 ? 2 : 1;
         const color = hexToPacked(pal.broadleaf[pick % pal.broadleaf.length]);
-        const light = shadePacked(color, 0.22);
-        const dark = shadePacked(color, -0.28);
+        const light = shadePacked(color, 0.26);
+        const highlight = shadePacked(color, 0.44);
+        const dark = shadePacked(color, -0.26);
+        const deep = shadePacked(color, -0.46);
         const top = base - trunkHeight - height + 2;
 
         this.drawShadow(cx, base, width);
+        // Ствол с корневищем.
         this.rect(cx - (trunkWidth >> 1), base - trunkHeight, trunkWidth, trunkHeight, this.packed.trunk);
+        this.put(cx - (trunkWidth >> 1) - 1, base - 1, this.packed.trunk);
+        this.put(cx + (trunkWidth >> 1), base - 1, this.packed.trunk);
 
         for (let row = 0; row < height; row++) {
             const t = ((row + 0.5) / height) * 2 - 1;
@@ -65,11 +70,15 @@ export const vegetation = {
             const x1 = Math.round(cx + half) - 1;
             for (let x = x0; x <= x1; x++) {
                 const lean = (x - cx) + (row - height / 2);  // < 0 — верх-лево (освещено), > 0 — низ-право (тень)
-                let shade = lean < -width * 0.2 ? light : lean > width * 0.28 ? dark : color;
-                if (hashUnit(x, top + row, 77) < 0.12) shade = shade === dark ? color : dark; // листва «шуршит»
+                let shade = lean < -width * 0.22 ? light : lean > width * 0.3 ? deep : lean > width * 0.1 ? dark : color;
+                if (hashUnit(x, top + row, 77) < 0.14) shade = shade === light || shade === highlight ? color : dark; // листва «шуршит»
                 this.put(x, top + row, shade);
             }
         }
+        // Блик на макушке (свет слева-сверху).
+        this.put(cx - 1, top + 1, highlight);
+        this.put(cx - 2, top + 2, highlight);
+        if (width >= 7) this.put(cx, top + 1, light);
 
         if (pal.blossom && pick % 3 === 0) {
             const blossom = hexToPacked(pal.blossom);
@@ -82,9 +91,13 @@ export const vegetation = {
     // Голое дерево (зима): ствол и несколько веток.
     drawBareTree(cx, base, pick) {
         const trunk = this.packed.trunk;
+        const bark = shadePacked(this.packed.trunk, -0.28);
         const height = this.px(8);
         this.drawShadow(cx, base, this.px(5));
         this.rect(cx, base - height, 1, height, trunk);
+        this.put(cx - 1, base - height + 2, bark);                 // тёмная сторона ствола
+        this.put(cx - 1, base - 1, trunk);
+        this.put(cx + 1, base - 1, trunk);                         // корни
 
         const side = pick % 2 ? 1 : -1;
         for (let k = 1; k <= this.px(3); k++) {
@@ -96,6 +109,11 @@ export const vegetation = {
             this.put(cx + side * 2, base - height + 2, trunk);
             this.put(cx - side * 2, base - height + 4, trunk);
             this.put(cx + side, base - height + 5, trunk);
+        } else {
+            // Дополнительные ветки с развилками — «зимний» силуэт становится богаче.
+            this.put(cx + side * 2, base - height + 3, trunk);
+            this.put(cx + side * 3, base - height + 2, trunk);
+            this.put(cx - side * 2, base - height + 5, trunk);
         }
     },
 
@@ -103,8 +121,9 @@ export const vegetation = {
     drawConifer(cx, base, pick, withSnow) {
         const pal = this.pal;
         const color = hexToPacked(pal.conifer[pick % pal.conifer.length]);
-        const light = shadePacked(color, 0.2);
-        const dark = shadePacked(color, -0.3);
+        const light = shadePacked(color, 0.24);
+        const dark = shadePacked(color, -0.34);
+        const deep = shadePacked(color, -0.5);
         const height = this.px(10) + (pick % 2);
         const maxHalf = Math.max(2, Math.round(this.px(6) / 2));
         const trunkHeight = this.px(2);
@@ -112,16 +131,21 @@ export const vegetation = {
 
         this.drawShadow(cx, base, this.px(6));
         this.rect(cx, base - trunkHeight, 1, trunkHeight, this.packed.trunk);
+        this.put(cx - 1, base - 1, this.packed.trunk);
+        this.put(cx + 1, base - 1, this.packed.trunk);
 
         for (let row = 0; row < height; row++) {
             const tierRow = row % 3;
             const half = Math.min(maxHalf, Math.floor(row * 0.34 + tierRow * 0.3 + 0.4));
             for (let dx = -half; dx <= half; dx++) {
-                let shade = dx < 0 ? light : dx > 0 ? dark : color;
+                // Левая сторона на свету, правая — в тени; самый край справа — глубокая тень.
+                let shade = dx < 0 ? light : dx > 0 ? (dx === half ? deep : dark) : color;
                 if (withSnow && tierRow === 0) shade = dx > 0 ? this.packed.snowShade : this.packed.snow; // снежная кромка яруса
                 this.put(cx + dx, top + row, shade);
             }
         }
+        // Верхушка и одиночная снежная шапка.
+        this.put(cx, top, withSnow ? this.packed.snow : light);
     },
 
     // Поле: весной ростки, летом растёт, осенью спелые колосья, зимой стерня.
