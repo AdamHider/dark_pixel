@@ -1,0 +1,150 @@
+import { Biome } from '../../../map/constants.js';
+import { BLACK, hexToPacked, shadePacked } from '../../color.js';
+import { SNOW_TEMPERATURE } from '../constants.js';
+import { hashUnit, tileHash } from '../noise.js';
+
+/* Деревья и поля */
+
+export const vegetation = {
+    // Два-три дерева на клетку, в случайных местах. Вид зависит от климата: в холодных краях ели, в тёплых лиственные.
+    collectTrees(items, x, y, i) {
+        const map = this.map;
+        const T = this.tileSize;
+        const conifer = map.biome[i] === Biome.TAIGA || map.biome[i] === Biome.TUNDRA || map.temperature[i] < 0.45;
+        const withSnow = conifer && this.pal.snowOnConifers && this.seasonalTemperature(i) < SNOW_TEMPERATURE;
+
+        const slots = [[0.26, 0.52], [0.74, 0.46], [0.5, 0.96]];
+        const start = tileHash(x, y, 30) % slots.length;
+        const count = 2 + (tileHash(x, y, 31) % 3 === 0 ? 1 : 0);
+
+        for (let k = 0; k < count; k++) {
+            const [fx, fy] = slots[(start + k) % slots.length];
+            const cx = Math.round(x * T + fx * T + (hashUnit(x, y, 40 + k) - 0.5) * 0.25 * T);
+            const base = Math.round(y * T + fy * T + (hashUnit(x, y, 50 + k) - 0.5) * 0.25 * T);
+            const pick = tileHash(x, y, 60 + k);
+
+            items.push({
+                y: base,
+                x: cx,
+                draw: () => (conifer ? this.drawConifer(cx, base, pick, withSnow) : this.drawBroadleaf(cx, base, pick))
+            });
+        }
+    },
+
+    // Овальная тень под деревом.
+    drawShadow(cx, base, width) {
+        const half = Math.floor(width / 2);
+        for (let dx = -half; dx <= half; dx++) this.blend(cx + dx, base, BLACK, 0.22);
+        for (let dx = -half + 1; dx <= half - 1; dx++) this.blend(cx + dx, base + 1, BLACK, 0.12);
+    },
+
+    // Лиственное дерево: округлая крона со светом сверху-слева, летом зелёное, весной в цвету, осенью рыже-золотое.
+    drawBroadleaf(cx, base, pick) {
+        const pal = this.pal;
+        if (pal.bareTrees || hashUnit(cx, base, 79) < (pal.deadTreeChance || 0)) {   // зимой все голые; в тёмном стиле часть мертва и летом
+            this.drawBareTree(cx, base, pick);
+            return;
+        }
+
+        const width = this.px(7) + (pick % 2);
+        const height = width;
+        const trunkHeight = this.px(2) + 1;
+        const trunkWidth = width >= 7 ? 2 : 1;
+        const color = hexToPacked(pal.broadleaf[pick % pal.broadleaf.length]);
+        const light = shadePacked(color, 0.22);
+        const dark = shadePacked(color, -0.28);
+        const top = base - trunkHeight - height + 2;
+
+        this.drawShadow(cx, base, width);
+        this.rect(cx - (trunkWidth >> 1), base - trunkHeight, trunkWidth, trunkHeight, this.packed.trunk);
+
+        for (let row = 0; row < height; row++) {
+            const t = ((row + 0.5) / height) * 2 - 1;
+            const half = (width / 2) * Math.sqrt(1 - t * t);
+            const x0 = Math.round(cx - half);
+            const x1 = Math.round(cx + half) - 1;
+            for (let x = x0; x <= x1; x++) {
+                const lean = (x - cx) + (row - height / 2);  // < 0 — верх-лево (освещено), > 0 — низ-право (тень)
+                let shade = lean < -width * 0.2 ? light : lean > width * 0.28 ? dark : color;
+                if (hashUnit(x, top + row, 77) < 0.12) shade = shade === dark ? color : dark; // листва «шуршит»
+                this.put(x, top + row, shade);
+            }
+        }
+
+        if (pal.blossom && pick % 3 === 0) {
+            const blossom = hexToPacked(pal.blossom);
+            this.put(cx - 2, top + 2, blossom);
+            this.put(cx + 1, top + 3, blossom);
+            this.put(cx - 1, top + 5, blossom);
+        }
+    },
+
+    // Голое дерево (зима): ствол и несколько веток.
+    drawBareTree(cx, base, pick) {
+        const trunk = this.packed.trunk;
+        const height = this.px(8);
+        this.drawShadow(cx, base, this.px(5));
+        this.rect(cx, base - height, 1, height, trunk);
+
+        const side = pick % 2 ? 1 : -1;
+        for (let k = 1; k <= this.px(3); k++) {
+            this.put(cx - k, base - height + k + 1, trunk);
+            this.put(cx + k, base - height + k + 1 + (side > 0 ? 1 : 0), trunk);
+        }
+        this.put(cx + side, base - height - 1, trunk);
+        if (this.mood === 'dark') {                                // кривые, корявые ветки
+            this.put(cx + side * 2, base - height + 2, trunk);
+            this.put(cx - side * 2, base - height + 4, trunk);
+            this.put(cx + side, base - height + 5, trunk);
+        }
+    },
+
+    // Ель: ярусы всё шире книзу; круглый год зелёная, зимой со снегом на лапах.
+    drawConifer(cx, base, pick, withSnow) {
+        const pal = this.pal;
+        const color = hexToPacked(pal.conifer[pick % pal.conifer.length]);
+        const light = shadePacked(color, 0.2);
+        const dark = shadePacked(color, -0.3);
+        const height = this.px(10) + (pick % 2);
+        const maxHalf = Math.max(2, Math.round(this.px(6) / 2));
+        const trunkHeight = this.px(2);
+        const top = base - trunkHeight - height + 1;
+
+        this.drawShadow(cx, base, this.px(6));
+        this.rect(cx, base - trunkHeight, 1, trunkHeight, this.packed.trunk);
+
+        for (let row = 0; row < height; row++) {
+            const tierRow = row % 3;
+            const half = Math.min(maxHalf, Math.floor(row * 0.34 + tierRow * 0.3 + 0.4));
+            for (let dx = -half; dx <= half; dx++) {
+                let shade = dx < 0 ? light : dx > 0 ? dark : color;
+                if (withSnow && tierRow === 0) shade = dx > 0 ? this.packed.snowShade : this.packed.snow; // снежная кромка яруса
+                this.put(cx + dx, top + row, shade);
+            }
+        }
+    },
+
+    // Поле: весной ростки, летом растёт, осенью спелые колосья, зимой стерня.
+    drawWheat(x, y) {
+        const pal = this.pal;
+        const T = this.tileSize;
+        const stalk = hexToPacked(pal.wheatStalk);
+        const head = hexToPacked(pal.wheatTop);
+
+        for (let k = 0; k < 8; k++) {
+            const h = tileHash(x, y, 300 + k);
+            const sx = x * T + (h % T);
+            const sy = y * T + this.px(4) + ((h >>> 8) % (T - this.px(4)));  // основание стебля
+            const variation = (h >>> 16) % 2;
+
+            if (pal.wheatStage === 'bare') {
+                this.rect(sx, sy - 2, 1, 2, stalk);
+                continue;
+            }
+            const stalkHeight = (pal.wheatStage === 'sprout' ? this.px(2) : pal.wheatStage === 'growing' ? this.px(4) : this.px(5)) + variation;
+            this.rect(sx, sy - stalkHeight, 1, stalkHeight, stalk);
+            this.put(sx, sy - stalkHeight, head);
+            if (pal.wheatStage === 'ripe') this.put(sx, sy - stalkHeight - 1, head);
+        }
+    },
+};

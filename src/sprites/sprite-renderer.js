@@ -1,8 +1,11 @@
+import { hexToPacked, mixPacked, packRgb, shadePacked } from '../render/color.js';
+import { hashUnit } from '../render/painter/noise.js';
+
 /* ============================================================
    SpriteRenderer — рисует объекты (города, деревни, армии, башни...) по описанию-конфигу, пиксель за пикселем.
    Никаких готовых картинок: вы описываете объект набором фигур, а функция его рисует.
 
-   Подключать после map-painter.js (оттуда берутся цветовые функции).
+   Цветовые функции берутся из src/render/color.js.
 
    ИСПОЛЬЗОВАНИЕ
        const sprites = new SpriteRenderer();
@@ -52,7 +55,7 @@
      flipX    — true: отразить по горизонтали
    Возвращает { canvas, width, height, anchorX, anchorY, scale }. Результат кэшируется.
    ============================================================ */
-class SpriteRenderer {
+export class SpriteRenderer {
     constructor() {
         this.cache = new Map();
     }

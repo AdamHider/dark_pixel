@@ -1,0 +1,15 @@
+{
+  "name": "dark-pixel",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "npx --yes http-server -c-1 -p 8080 .",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "globals": "^15.15.0"
+  },
+  "type": "module",
+  "private": true
+}
