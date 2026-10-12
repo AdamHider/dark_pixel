@@ -2580,7 +2580,7 @@
 
   // src/render/painter/layers/borders.js
   var borders = {
-    // Крупный волнистый шум границы: одна и та же функция для пикселя, поэтому линия непрерывна.
+    // Крупный волнистый шум: значение зависит от положения пикселя, поэтому линия непрерывна.
     borderNoise(gx, gy) {
       const cell = Math.max(8, this.px(24));
       const fx = gx / cell, fy = gy / cell;
@@ -2592,7 +2592,13 @@
       const top = a + (b - a) * u;
       return top + (c + (d - c) * u - top) * v;
     },
-    // Границы регионов: плотная тёмная кромка вдоль края региона, изрезанная крупным шумом.
+    /* Полоса вдоль одной стороны клетки. dist — расстояние пикселя от стыка внутрь клетки (>=1),
+       wobble — сдвиг внутреннего края шумом, width — толщина полосы. Пиксель у самого стыка (dist=1)
+       всегда попадает в полосу, поэтому линия никогда не рвётся; гуляет только её внутренний край. */
+    edgeBand(dist, wobble, width) {
+      return dist >= 1 && dist <= width + wobble;
+    },
+    // Границы регионов: ровная полоса постоянной ширины вдоль всех сторон клетки.
     paintRegionBorders() {
       const { size, regionId } = this.map;
       const T = this.tileSize;
@@ -2600,16 +2606,21 @@
       const pixels = this.pixels;
       const relief2 = this.reliefHeight;
       const ink = this.colors.regionBorder;
-      const radius = Math.max(2, this.px(3));
+      const width = Math.max(2, this.px(2));
+      const amp = Math.max(1, this.px(1));
       for (let tile = 0; tile < size * size; tile++) {
         const id = regionId[tile];
         if (id === -1) continue;
         const tx = tile % size, ty = Math.floor(tile / size);
+        const left = tx > 0 ? regionId[tile - 1] : id;
         const right = tx < size - 1 ? regionId[tile + 1] : id;
-        const below = ty < size - 1 ? regionId[tile + size] : id;
-        const edgeRight = tx < size - 1 && right !== -1 && right !== id;
-        const edgeBelow = ty < size - 1 && below !== -1 && below !== id;
-        if (!edgeRight && !edgeBelow) continue;
+        const up = ty > 0 ? regionId[tile - size] : id;
+        const down = ty < size - 1 ? regionId[tile + size] : id;
+        const eL = tx > 0 && left !== -1 && left !== id;
+        const eR = tx < size - 1 && right !== -1 && right !== id;
+        const eU = ty > 0 && up !== -1 && up !== id;
+        const eD = ty < size - 1 && down !== -1 && down !== id;
+        if (!eL && !eR && !eU && !eD) continue;
         const x0 = tx * T, y0 = ty * T;
         for (let oy = 0; oy < T; oy++) {
           const gy = y0 + oy;
@@ -2618,14 +2629,14 @@
             const k = gy * W + gx;
             if (this.waterMask && this.waterMask[k]) continue;
             if (this.riverMask && this.riverMask[k]) continue;
-            const toRight = edgeRight ? T - ox : Infinity;
-            const toBottom = edgeBelow ? T - oy : Infinity;
-            const dist = Math.min(toRight, toBottom);
-            if (dist > radius) continue;
-            const d = dist - this.borderNoise(gx, gy) * radius;
-            if (d >= radius || d <= 0) continue;
-            let alpha = 0.85;
-            if (relief2) alpha *= 0.5 + 0.5 * (1 - Math.min(1, relief2[k] / 110));
+            let inBand = false;
+            if (eR) inBand = this.edgeBand(T - ox, (this.borderNoise((tx + 1) * T, gy) - 0.5) * 2 * amp, width);
+            if (!inBand && eL) inBand = this.edgeBand(ox + 1, (this.borderNoise(tx * T, gy) - 0.5) * 2 * amp, width);
+            if (!inBand && eD) inBand = this.edgeBand(T - oy, (this.borderNoise(gx, (ty + 1) * T) - 0.5) * 2 * amp, width);
+            if (!inBand && eU) inBand = this.edgeBand(oy + 1, (this.borderNoise(gx, ty * T) - 0.5) * 2 * amp, width);
+            if (!inBand) continue;
+            let alpha = 0.9;
+            if (relief2) alpha *= 0.6 + 0.4 * (1 - Math.min(1, relief2[k] / 110));
             pixels[k] = mixPacked(pixels[k], ink, alpha);
           }
         }
@@ -2653,16 +2664,22 @@
       const W = this.width;
       const pixels = this.pixels;
       const ink = this.colors.factionBorder;
-      const radius = Math.max(3, this.px(6));
+      const width = Math.max(3, this.px(3));
+      const half = width / 2;
+      const amp = width * 0.5;
       for (let tile = 0; tile < size * size; tile++) {
         const id = factionId[tile];
         if (id < 0) continue;
         const tx = tile % size, ty = Math.floor(tile / size);
+        const left = tx > 0 ? factionId[tile - 1] : id;
         const right = tx < size - 1 ? factionId[tile + 1] : id;
-        const below = ty < size - 1 ? factionId[tile + size] : id;
-        const edgeRight = tx < size - 1 && right >= 0 && right !== id;
-        const edgeBelow = ty < size - 1 && below >= 0 && below !== id;
-        if (!edgeRight && !edgeBelow) continue;
+        const up = ty > 0 ? factionId[tile - size] : id;
+        const down = ty < size - 1 ? factionId[tile + size] : id;
+        const eL = tx > 0 && left >= 0 && left !== id;
+        const eR = tx < size - 1 && right >= 0 && right !== id;
+        const eU = ty > 0 && up >= 0 && up !== id;
+        const eD = ty < size - 1 && down >= 0 && down !== id;
+        if (!eL && !eR && !eU && !eD) continue;
         const color = this.factionColor(id);
         const x0 = tx * T, y0 = ty * T;
         for (let oy = 0; oy < T; oy++) {
@@ -2672,15 +2689,30 @@
             const k = gy * W + gx;
             if (this.waterMask && this.waterMask[k]) continue;
             if (this.riverMask && this.riverMask[k]) continue;
-            const toRight = edgeRight ? T - ox : Infinity;
-            const toBottom = edgeBelow ? T - oy : Infinity;
-            const dist = Math.min(toRight, toBottom);
-            if (dist > radius) continue;
-            const d = dist - this.factionNoise(gx, gy) * radius;
-            if (d >= radius || d <= 0) continue;
-            const status = this.diplomacyColor(id, edgeRight ? right : below);
-            pixels[k] = mixPacked(pixels[k], ink, 0.9);
-            pixels[k] = mixPacked(pixels[k], status || color, 0.85);
+            let t = -1, status = null;
+            if (eR) {
+              t = T - ox - (this.factionNoise((tx + 1) * T, gy) - 0.5) * 2 * amp;
+              status = this.diplomacyColor(id, right);
+            }
+            if ((t < 1 || t > width + amp) && eL) {
+              t = ox + 1 - (this.factionNoise(tx * T, gy) - 0.5) * 2 * amp;
+              status = this.diplomacyColor(id, left);
+            }
+            if ((t < 1 || t > width + amp) && eD) {
+              t = T - oy - (this.factionNoise(gx, (ty + 1) * T) - 0.5) * 2 * amp;
+              status = this.diplomacyColor(id, down);
+            }
+            if ((t < 1 || t > width + amp) && eU) {
+              t = oy + 1 - (this.factionNoise(gx, ty * T) - 0.5) * 2 * amp;
+              status = this.diplomacyColor(id, up);
+            }
+            if (t < 1 || t > width + amp) continue;
+            if (t <= half) {
+              pixels[k] = mixPacked(pixels[k], ink, 0.9);
+              pixels[k] = mixPacked(pixels[k], status || color, 0.6);
+            } else {
+              pixels[k] = mixPacked(pixels[k], color, 0.92);
+            }
           }
         }
       }
