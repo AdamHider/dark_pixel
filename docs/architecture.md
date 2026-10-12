@@ -41,7 +41,7 @@ Object.assign(MapGenerator.prototype, elevation, terrain, climate, resources, ri
 То же для рисования (`src/render/painter/map-painter.js`):
 
 ```js
-Object.assign(MapPainter.prototype, base, tileColors, hills, shores, relief, rivers, texture, grading, props, roads, settlements, minerals, borders, scene, vegetation);
+Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers, texture, grading, props, roads, settlements, minerals, borders, scene, vegetation);
 ```
 
 **Практический вывод.** Чтобы добавить новый этап генерации (или слой рисования), не нужно трогать большой

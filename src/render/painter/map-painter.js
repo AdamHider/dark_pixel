@@ -125,6 +125,11 @@ export class MapPainter {
         return Math.round(n * this.tileSize / 12);
     }
 
+    // То же, но не меньше одного пикселя — для мелких деталей спрайтов.
+    pxMin(n) {
+        return Math.max(1, this.px(n));
+    }
+
     forEachTile(callback) {
         const size = this.map.size;
         for (let y = 0; y < size; y++) {

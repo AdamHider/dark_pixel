@@ -67,7 +67,7 @@ export const rivers = {
        пикселей кромки с расстоянием до края и список «сердцевины». Кэш сбрасывается при смене карты или параметров резкости. */
     buildRiverGeometry() {
         const map = this.map;
-        const key = [this.tileSize, this.options.coastSharpness, this.options.blendSharpness, this.options.roundCoast, this.seedSalt].join('|');
+        const key = [this.tileSize, this.options.coastSharpness, this.options.blendSharpness, this.options.coastScale, this.seedSalt].join('|');
         const cache = this.riverCache;
         if (cache && cache.source === map.river && cache.key === key) return cache;
 

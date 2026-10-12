@@ -31,7 +31,6 @@ export const settlements = {
         const level = map.settlementLevel[i] || 1;
         const maxLevel = (map.options && map.options.settlementMaxLevel) || 4;
         const rnd = n => hashUnit(x, y, 1000 + n);
-        const n = value => Math.max(1, this.px(value));
 
         // Сколько домиков: от settlementMinHouses (уровень 1) до settlementMaxHouses (высший уровень).
         const share = (level - 1) / Math.max(1, maxLevel - 1);
@@ -79,9 +78,9 @@ export const settlements = {
         }
 
         // Размер дома подстраивается под число домов в клетке: один — крупнее, четыре — компактнее.
-        const w = count === 1 ? n(6) : n(5);
-        const bodyH = count === 1 ? n(4) : n(3);
-        const roofH = count >= 3 ? n(2) : n(3);
+        const w = count === 1 ? this.pxMin(6) : this.pxMin(5);
+        const bodyH = count === 1 ? this.pxMin(4) : this.pxMin(3);
+        const roofH = count >= 3 ? this.pxMin(2) : this.pxMin(3);
         const group = map.settlementGroups[map.settlementGroup[i]];
         const isCenter = group && group.tile === i;
         const nudges = [[0, 0], [-1, 0], [1, 0], [0, -1], [-2, 0], [2, 0], [0, 1], [-1, -1], [1, -1]];
@@ -89,18 +88,18 @@ export const settlements = {
         slots.forEach(([fx, fy], k) => {
             const chapel = k === 0 && level === maxLevel && isCenter && count >= 3;   // в центре города — каменная часовня
             const kind = chapel ? 'tower' : (level === 1 && rnd(30 + k) < 0.4 ? 'hut' : 'house');
-            const size = chapel ? [n(4), n(5), n(5)] : kind === 'hut' ? [Math.max(2, w - 1), Math.max(2, bodyH - 1), Math.max(2, roofH - 1)] : [w, bodyH, roofH];
+            const size = chapel ? [this.pxMin(4), this.pxMin(5), this.pxMin(5)] : kind === 'hut' ? [Math.max(2, w - 1), Math.max(2, bodyH - 1), Math.max(2, roofH - 1)] : [w, bodyH, roofH];
             // Заметный разброс по обеим осям (плюс сдвиг соседних домов в разные стороны), чтобы домики
             // в одной клетке не выстраивались на одну линию — иначе поселение выглядит «наклеенным».
-            const stagger = (k & 1 ? 1 : -1) * n(1);
-            const jitterX = Math.round((rnd(40 + k) - 0.5) * n(5)) + stagger;
-            const jitterY = Math.round((rnd(50 + k) - 0.5) * n(4)) + stagger;
+            const stagger = (k & 1 ? 1 : -1) * this.pxMin(1);
+            const jitterX = Math.round((rnd(40 + k) - 0.5) * this.pxMin(5)) + stagger;
+            const jitterY = Math.round((rnd(50 + k) - 0.5) * this.pxMin(4)) + stagger;
             for (const [nx, ny] of nudges) {
-                if (tryPlace(left + fx * T + jitterX + nx * n(1), top + fy * T + jitterY + ny * n(1), ...size, kind)) return;
+                if (tryPlace(left + fx * T + jitterX + nx * this.pxMin(1), top + fy * T + jitterY + ny * this.pxMin(1), ...size, kind)) return;
             }
         });
         for (let attempt = 0; houses.length === 0 && attempt < 16; attempt++) {  // запасной вариант: хоть один дом в клетке
-            tryPlace(left + T / 2 + (rnd(70 + attempt) - 0.5) * n(6), top + T * 0.8 + (rnd(90 + attempt) - 0.5) * n(4), n(5), n(3), n(3), 'house');
+            tryPlace(left + T / 2 + (rnd(70 + attempt) - 0.5) * this.pxMin(6), top + T * 0.8 + (rnd(90 + attempt) - 0.5) * this.pxMin(4), this.pxMin(5), this.pxMin(3), this.pxMin(3), 'house');
         }
 
         // Утоптанная земля и улица-заготовка в сторону дороги (дороги между клетками рисует paintRoads).
@@ -115,8 +114,8 @@ export const settlements = {
                 break;
             }
         }
-        const blobs = [[cx, cy, n(7)]];
-        for (const house of houses) blobs.push([house.x, house.base - house.bodyH / 2, n(4)]);
+        const blobs = [[cx, cy, this.pxMin(7)]];
+        for (const house of houses) blobs.push([house.x, house.base - house.bodyH / 2, this.pxMin(4)]);
         return { level, houses, blobs, street };
     },
 
@@ -244,18 +243,24 @@ export const settlements = {
         for (let row = 0; row < part.roofH; row++) {                                        // крыша: ряды всё шире книзу
             const half = ((part.w + 2 * overhang) / 2) * (row + 1) / part.roofH;
             const y = pad + row;
+            const band = row % 2 ? -0.03 : 0.05;                                            // черепица: чередование рядов
             for (let x = Math.round(centerX - half + 0.5); x <= Math.round(centerX + half - 0.5); x++) {
-                buffer.put(x, y, x < centerX ? shadePacked(roof, 0.14) : shadePacked(roof, -0.2));
+                buffer.put(x, y, x < centerX ? shadePacked(roof, 0.14 + band) : shadePacked(roof, -0.2 + band));
             }
         }
         buffer.rect(left + (part.w >> 1), top + part.bodyH - Math.min(2, part.bodyH - 1), 1, Math.min(2, part.bodyH - 1), c.plank);   // дверь
         if (this.options.spriteOutline) buffer.outline(c.outline);
 
+        // Окна: чем шире дом, тем больше света в окнах.
+        const windowY = top + 1;
+        const windows = part.bodyH >= 3
+            ? (part.w >= 5 ? [[left + 1, windowY], [left + part.w - 2, windowY]] : [[left + 1, windowY]])
+            : [];
         const sprite = {
             buffer, width, height,
             anchorX: Math.round(centerX),
             anchorY: height - pad - 1,
-            windows: part.bodyH >= 3 ? [[left + (tower ? 1 : 1), top + 1]] : [],
+            windows,
             chimney: !tower && part.kind === 'house' && roll > 0.4 ? [Math.round(centerX) + 1, pad - 1] : null
         };
         this.spriteCache.set(key, sprite);

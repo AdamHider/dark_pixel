@@ -7,7 +7,7 @@
 | Что | Где | Как передать |
 | --- | --- | --- |
 | Генерация карты (рельеф, климат, зоны, реки, поселения, дороги) | `src/map/defaults.js` (`DEFAULTS`) | `new MapGenerator({ seed: 7, steppeShare: 0.12 })` |
-| Рисование (размер клетки, скругление берега, горы, дома, свет) | `src/render/painter/map-painter.js` (конструктор) | `new MapRenderer(canvas, generator, { tileSize: 12, roundCoast: 2 })` |
+| Рисование (размер клетки, скругление берега, горы, дома, свет) | `src/render/painter/map-painter.js` (конструктор) | `new MapRenderer(canvas, generator, { tileSize: 16, coastScale: 1.15 })` |
 | Палитры сезонов | `src/render/seasons.js` | правка объектов `SEASONS` / `DARK_SEASONS` |
 | Фиксированные цвета, пороги, ступени | `src/render/painter/constants.js` | правка констант |
 | Коды (типы, биомы, ресурсы) | `src/map/constants.js` | правка констант |
@@ -37,11 +37,11 @@ const renderer = new MapRenderer(canvas, generator, { tileSize: 12 }); // 12 п�
 ### Сделать берега более естественными / более квадратными
 
 ```js
-new MapRenderer(canvas, generator, { roundCoast: 3 });  // 0 — квадратные, 3 — сильно округлые
+new MapRenderer(canvas, generator, { coastScale: 2 });  // 0 — квадратные, 2+ — сильно округлые
 ```
 
 Плюс на уровне генерации силуэт берега регулируют `shapeVariety`, `coastDetail`, `warpStrength` в
-`src/map/defaults.js`. `roundCoast` меняет **форму линии берега**, `coastSharpness` — **резкость кромки**.
+`src/map/defaults.js`. `coastScale` меняет **форму линии берега**, `coastSharpness` — **резкость кромки**.
 
 ### Другие горы
 
@@ -171,7 +171,7 @@ new MapRenderer(canvas, generator, {
 3. Вызовите `this.paintMyLayer()` из `paint()` в нужном месте порядка слоёв.
 
 > Пишите через `this.put(...)`, `this.rect(...)`, `this.linePoints(...)` и цвета из `this.colors` /
-> `this.pal`, а размеры задавайте через `this.px(n)`.
+> `this.pal`, а размеры задавайте через `this.px(n)` (и `this.pxMin(n)` для деталей, чтобы они не схлопывались в 0).
 
 ---
 

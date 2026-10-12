@@ -31,7 +31,7 @@ const generator = new MapGenerator({
 });
 
 const renderer = new MapRenderer(document.getElementById('map'), generator, {
-    // roundCoast: 2,        // 0..3: уровень скругления береговой линии (0 — берег по границам клеток, больше — плавнее)
+    // coastScale: 1.15,     // масштаб скругления берега (0 — выключить; больше — плавнее, но берег «съедается»)
 });
 const info = document.getElementById('info');
 const selectionPanel = document.getElementById('selection');
