@@ -7,6 +7,7 @@ import { coast } from './layers/coast.js';
 import { borders } from './layers/borders.js';
 import { factions } from './layers/factions.js';
 import { fortresses } from './layers/fortresses.js';
+import { armyOverlay } from './layers/army-overlay.js';
 import { grading } from './layers/grading.js';
 import { hills } from './layers/hills.js';
 import { minerals } from './layers/minerals.js';
@@ -81,7 +82,7 @@ export class MapPainter {
     // view: 'terrain' | 'temperature' | 'regions'. Возвращает холст с готовой картой.
     // relations — Map «ключ пары фракций -> уровень отношений» ('war' | 'neutral' | 'ally'): им красится граница.
     // viewerFaction — чья карта: в режиме «Политика» свои земли, союзники, враги и нейтралы красятся по-разному.
-    paint({ view, seasonName, showBorders, showFactions, mood, relations, viewerFaction }) {
+    paint({ view, seasonName, showBorders, showFactions, mood, relations, viewerFaction, reachable, zoc }) {
         this.view = view;
         this.relations = relations || null;
         this.viewerFaction = viewerFaction | 0;
@@ -124,6 +125,10 @@ export class MapPainter {
 
         if (terrain && this.mood === 'dark' && this.options.grade) this.applyGrading();
         for (const draw of this.emissive) draw();
+
+        // Зона отряда — самый верхний слой: подсветка клеток не должна прятаться под постройками,
+        // кострами или туманом. Рисуется по сетке клеток (см. painter/layers/army-overlay.js).
+        if (reachable || zoc) this.paintArmyOverlay(reachable, zoc, this.map.size);
 
         this.ctx.putImageData(image, 0, 0);
         return this.canvas;
@@ -186,4 +191,4 @@ export class MapPainter {
     }
 }
 
-Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers, texture, grading, props, roads, settlements, minerals, borders, factions, fortresses, scene, vegetation);
+Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers, texture, grading, props, roads, settlements, minerals, borders, factions, fortresses, armyOverlay, scene, vegetation);

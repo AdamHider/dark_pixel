@@ -1,13 +1,13 @@
 import { CULTURE_COLORS } from '../../game/cultures.js';
 import { SPRITE_EXAMPLES } from '../../sprites/sprite-examples.js';
-import { COLORS } from '../painter/constants.js';
 
 /* Армии поверх карты.
 
    Армия — это данные GameState (tile, faction, strength, moves), а рисует её этот слой: маркер в цвет
-   фракции и, у выбранной армии, достижимая зона (куда можно дойти за очки движения) и зона контроля
-   (соседние клетки, как в Total War). Достижимую зону и зону контроля считает модель — игровая логика,
-   а не рисование; здесь мы только показываем результат. */
+   фракции. Достижимая зона и зона контроля считаются моделью и запекаются в буфер карты
+   (src/render/painter/layers/army-overlay.js), а не рисуются поверх экрана — иначе они «плавали» бы
+   при скролле и не совпадали с клетками. Здесь остаются только сами маркеры: они выходят за пределы
+   клетки и потому рисуются спрайтами поверх карты. */
 
 export const armies = {
     // Модель игры (GameState) — нужна, чтобы спросить reachableTiles/zoneOfControl. Можно не задавать.
@@ -19,14 +19,14 @@ export const armies = {
     selectArmy(army) {
         if (this.armySelection === army) return;
         this.armySelection = army || null;
-        this.draw();
+        this.refreshArmyZone();     // пересчитать зону и перерисовать карту
         if (this.onArmySelectionChange) this.onArmySelectionChange(this.armySelection);
     },
 
     clearArmySelection() {
         if (!this.armySelection) return;
         this.armySelection = null;
-        this.draw();
+        this.refreshArmyZone();
         if (this.onArmySelectionChange) this.onArmySelectionChange(null);
     },
 
@@ -63,41 +63,8 @@ export const armies = {
         const { ctx } = this;
         ctx.save();
         ctx.imageSmoothingEnabled = false;
-        this.drawArmyMoveArea();
         for (const army of this.armies) this.drawArmyMarker(army);
         ctx.restore();
-    },
-
-    // Зона, куда может дойти выбранная армия, и её зона контроля.
-    drawArmyMoveArea() {
-        const army = this.armySelection;
-        if (!army || !this.armyModel) return;
-        const { ctx } = this;
-        const tileSize = this.options.tileSize;
-        const size = this.map.size;
-        const cell = tileSize * this.camera.zoom;
-        const screenX = tile => (tile * tileSize - this.camera.x) * this.camera.zoom;
-
-        const reachable = this.armyModel.reachableTiles(army);
-        ctx.fillStyle = COLORS.armyReach;
-        for (const tile of reachable.keys()) {
-            ctx.fillRect(screenX(tile % size), screenX(Math.floor(tile / size)), cell, cell);
-        }
-
-        // Контур зоны контроля: рисуем только внешний край, чтобы не заливать каждую клетку.
-        const zone = this.armyModel.zoneOfControl(army);
-        ctx.strokeStyle = COLORS.armyZoc;
-        ctx.lineWidth = Math.max(1, cell * 0.12);
-        for (const tile of zone) {
-            const x = tile % size, y = Math.floor(tile / size);
-            const left = screenX(x), top = screenX(y);
-            ctx.beginPath();
-            if (!zone.has(tile - 1) && x > 0) { ctx.moveTo(left, top); ctx.lineTo(left, top + cell); }
-            if (!zone.has(tile + 1) && x < size - 1) { ctx.moveTo(left + cell, top); ctx.lineTo(left + cell, top + cell); }
-            if (!zone.has(tile - size) && y > 0) { ctx.moveTo(left, top); ctx.lineTo(left + cell, top); }
-            if (!zone.has(tile + size) && y < size - 1) { ctx.moveTo(left, top + cell); ctx.lineTo(left + cell, top + cell); }
-            ctx.stroke();
-        }
     },
 
     // Маркер армии: спрайт из конфига (src/sprites/sprite-examples.js) в цвет культуры фракции.

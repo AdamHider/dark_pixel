@@ -133,7 +133,7 @@ renderer.onSelect = (tile, region) => {
     const army = renderer.armySelection;
     if (army && tile && gameState.canReach(army, tile.index)) {
         gameState.moveArmy(army.id, tile.index);
-        renderer.clearArmySelection();
+        renderer.refreshArmyZone();   // отряд на новом месте — пересчитать зону и обновить карту
         syncGame();
         info.textContent = `Отряд перешёл в (${tile.x}, ${tile.y}) · осталось ходов: ${army.moves}`;
         return;

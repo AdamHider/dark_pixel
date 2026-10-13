@@ -2423,10 +2423,6 @@
     // цвет границы: нейтралитет
     armyBase: "#1b140d",
     // основание маркера армии
-    armyReach: "rgba(255, 226, 122, 0.20)",
-    // заливка достижимых клеток
-    armyZoc: "rgba(192, 57, 43, 0.55)",
-    // контур зоны контроля
     sand: "#dccb96",
     wetSand: "#b5a67c",
     pebbleLight: "#a9a59a",
@@ -2905,6 +2901,53 @@
     // Свечение знамени в тёмном стиле (чтобы крепость читалась на тёмной карте).
     fortressBannerGlow(fortress) {
       return mixPacked(this.factionColor(fortress.factionId), packRgb(255, 255, 255), 0.25);
+    }
+  };
+
+  // src/render/painter/layers/army-overlay.js
+  var REACH = packRgb(255, 226, 122);
+  var REACH_MIX = 0.28;
+  var ZOC = packRgb(192, 57, 43);
+  var ZOC_MIX = 0.45;
+  var armyOverlay = {
+    // reachable — Set индексов клеток, zoc — Set индексов зоны контроля, size — сторона карты в клетках.
+    paintArmyOverlay(reachable, zoc, size) {
+      if ((!reachable || reachable.size === 0) && (!zoc || zoc.size === 0)) return;
+      const T = this.tileSize;
+      const W = this.width;
+      const pixels = this.pixels;
+      if (reachable) {
+        for (const tile of reachable) {
+          const tx = tile % size, ty = Math.floor(tile / size);
+          const x0 = tx * T, y0 = ty * T;
+          for (let oy = 0; oy < T; oy++) {
+            const row = (y0 + oy) * W;
+            for (let ox = 0; ox < T; ox++) {
+              const k = row + x0 + ox;
+              pixels[k] = mixPacked(pixels[k], REACH, REACH_MIX);
+            }
+          }
+        }
+      }
+      if (zoc) {
+        for (const tile of zoc) {
+          const tx = tile % size, ty = Math.floor(tile / size);
+          const x0 = tx * T, y0 = ty * T;
+          this.overlayEdge(tx > 0 && zoc.has(tile - 1), x0, y0, T, W, 0, ZOC, ZOC_MIX);
+          this.overlayEdge(tx < size - 1 && zoc.has(tile + 1), x0 + T - 1, y0, T, W, 0, ZOC, ZOC_MIX);
+          this.overlayEdge(ty > 0 && zoc.has(tile - size), x0, y0, T, W, 1, ZOC, ZOC_MIX);
+          this.overlayEdge(ty < size - 1 && zoc.has(tile + size), x0, y0 + T - 1, T, W, 1, ZOC, ZOC_MIX);
+        }
+      }
+    },
+    // Полоса вдоль одной стороны клетки, если за ней зоны нет (внутренние стыки не обводим).
+    overlayEdge(neighborInside, x0, y0, T, W, axis, color, amount) {
+      if (neighborInside) return;
+      const pixels = this.pixels;
+      for (let p = 0; p < T; p++) {
+        const k = axis === 0 ? (y0 + p) * W + x0 : y0 * W + x0 + p;
+        pixels[k] = mixPacked(pixels[k], color, amount);
+      }
     }
   };
 
@@ -4861,7 +4904,7 @@
     // view: 'terrain' | 'temperature' | 'regions'. Возвращает холст с готовой картой.
     // relations — Map «ключ пары фракций -> уровень отношений» ('war' | 'neutral' | 'ally'): им красится граница.
     // viewerFaction — чья карта: в режиме «Политика» свои земли, союзники, враги и нейтралы красятся по-разному.
-    paint({ view, seasonName, showBorders, showFactions, mood, relations, viewerFaction }) {
+    paint({ view, seasonName, showBorders, showFactions, mood, relations, viewerFaction, reachable, zoc }) {
       this.view = view;
       this.relations = relations || null;
       this.viewerFaction = viewerFaction | 0;
@@ -4901,6 +4944,7 @@
       if (terrain2) this.paintScene();
       if (terrain2 && this.mood === "dark" && this.options.grade) this.applyGrading();
       for (const draw of this.emissive) draw();
+      if (reachable || zoc) this.paintArmyOverlay(reachable, zoc, this.map.size);
       this.ctx.putImageData(image, 0, 0);
       return this.canvas;
     }
@@ -4958,7 +5002,7 @@
       return points;
     }
   };
-  Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers2, texture, grading, props, roads2, settlements2, minerals, borders, factions2, fortresses2, scene, vegetation);
+  Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers2, texture, grading, props, roads2, settlements2, minerals, borders, factions2, fortresses2, armyOverlay, scene, vegetation);
 
   // src/sprites/sprite-examples.js
   var SPRITE_EXAMPLES = {
@@ -5264,13 +5308,13 @@
     selectArmy(army) {
       if (this.armySelection === army) return;
       this.armySelection = army || null;
-      this.draw();
+      this.refreshArmyZone();
       if (this.onArmySelectionChange) this.onArmySelectionChange(this.armySelection);
     },
     clearArmySelection() {
       if (!this.armySelection) return;
       this.armySelection = null;
-      this.draw();
+      this.refreshArmyZone();
       if (this.onArmySelectionChange) this.onArmySelectionChange(null);
     },
     // Цвет фракции — по её культуре (см. src/game/cultures.js).
@@ -5303,49 +5347,8 @@
       const { ctx } = this;
       ctx.save();
       ctx.imageSmoothingEnabled = false;
-      this.drawArmyMoveArea();
       for (const army of this.armies) this.drawArmyMarker(army);
       ctx.restore();
-    },
-    // Зона, куда может дойти выбранная армия, и её зона контроля.
-    drawArmyMoveArea() {
-      const army = this.armySelection;
-      if (!army || !this.armyModel) return;
-      const { ctx } = this;
-      const tileSize = this.options.tileSize;
-      const size = this.map.size;
-      const cell = tileSize * this.camera.zoom;
-      const screenX = (tile) => (tile * tileSize - this.camera.x) * this.camera.zoom;
-      const reachable = this.armyModel.reachableTiles(army);
-      ctx.fillStyle = COLORS.armyReach;
-      for (const tile of reachable.keys()) {
-        ctx.fillRect(screenX(tile % size), screenX(Math.floor(tile / size)), cell, cell);
-      }
-      const zone = this.armyModel.zoneOfControl(army);
-      ctx.strokeStyle = COLORS.armyZoc;
-      ctx.lineWidth = Math.max(1, cell * 0.12);
-      for (const tile of zone) {
-        const x = tile % size, y = Math.floor(tile / size);
-        const left = screenX(x), top = screenX(y);
-        ctx.beginPath();
-        if (!zone.has(tile - 1) && x > 0) {
-          ctx.moveTo(left, top);
-          ctx.lineTo(left, top + cell);
-        }
-        if (!zone.has(tile + 1) && x < size - 1) {
-          ctx.moveTo(left + cell, top);
-          ctx.lineTo(left + cell, top + cell);
-        }
-        if (!zone.has(tile - size) && y > 0) {
-          ctx.moveTo(left, top);
-          ctx.lineTo(left + cell, top);
-        }
-        if (!zone.has(tile + size) && y < size - 1) {
-          ctx.moveTo(left, top + cell);
-          ctx.lineTo(left + cell, top + cell);
-        }
-        ctx.stroke();
-      }
     },
     // Маркер армии: спрайт из конфига (src/sprites/sprite-examples.js) в цвет культуры фракции.
     drawArmyMarker(army) {
@@ -5656,6 +5659,7 @@
   };
 
   // src/render/renderer/map-renderer.js
+  var normalizeZone = (zone) => zone && zone.size ? new Set(zone.keys ? zone.keys() : zone) : null;
   var MapRenderer = class {
     constructor(canvas, map, options = {}) {
       this.canvas = canvas;
@@ -5687,6 +5691,8 @@
       this.objects = [];
       this.armies = [];
       this.armySelection = null;
+      this.armyReachable = null;
+      this.armyZoc = null;
       this.relations = null;
       this.viewerFaction = 0;
       this.onObjectClick = null;
@@ -5704,6 +5710,9 @@
     // Вызывать после каждой новой генерации карты.
     refresh() {
       this.selection = null;
+      this.armySelection = null;
+      this.armyReachable = null;
+      this.armyZoc = null;
       this.rebuildBuffer();
       this.fitToView();
     }
@@ -5752,8 +5761,25 @@
         showFactions: this.showFactions,
         mood: this.mood,
         relations: this.relations,
-        viewerFaction: this.viewerFaction
+        viewerFaction: this.viewerFaction,
+        reachable: this.armyReachable,
+        zoc: this.armyZoc
       });
+    }
+    // Достижимая зона и зона контроля выбранного отряда: запекаются в буфер карты (см. painter/layers/army-overlay.js).
+    setArmyZone(reachable, zoc) {
+      this.armyReachable = normalizeZone(reachable);
+      this.armyZoc = normalizeZone(zoc);
+      this.rebuildBuffer();
+      this.draw();
+    }
+    // Пересчитать зону по выбранному отряду и обновить карту. Модель даёт reachableTiles/zoneOfControl.
+    refreshArmyZone() {
+      if (this.armySelection && this.armyModel) {
+        this.setArmyZone(this.armyModel.reachableTiles(this.armySelection), this.armyModel.zoneOfControl(this.armySelection));
+      } else {
+        this.setArmyZone(null, null);
+      }
     }
     // Чья карта в режиме «Политика» (индекс фракции игрока).
     setViewerFaction(factionId) {
@@ -6569,7 +6595,7 @@
     const army = renderer.armySelection;
     if (army && tile && gameState.canReach(army, tile.index)) {
       gameState.moveArmy(army.id, tile.index);
-      renderer.clearArmySelection();
+      renderer.refreshArmyZone();
       syncGame();
       info.textContent = `\u041E\u0442\u0440\u044F\u0434 \u043F\u0435\u0440\u0435\u0448\u0451\u043B \u0432 (${tile.x}, ${tile.y}) \xB7 \u043E\u0441\u0442\u0430\u043B\u043E\u0441\u044C \u0445\u043E\u0434\u043E\u0432: ${army.moves}`;
       return;
