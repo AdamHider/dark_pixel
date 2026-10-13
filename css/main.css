@@ -302,3 +302,32 @@ input[type=checkbox] {
 .diplo-swatch { width: 10px; height: 10px; border: 1px solid #000; }
 .diplo-culture { color: var(--eu-muted); }
 .diplo-status { color: var(--eu-gold); }
+
+/* Раздел «Экономика»: карточка фракции с ресурсами карты */
+.eco-list { display: flex; flex-direction: column; gap: 4px; }
+.eco-card {
+    padding: 4px;
+    background: #100d0a;
+    border: 1px solid var(--eu-panel-border);
+    border-radius: 2px;
+}
+.eco-head {
+    display: grid;
+    grid-template-columns: 10px 1fr auto;
+    align-items: center;
+    gap: 6px;
+    font-size: 8px;
+    color: var(--eu-text);
+}
+.eco-gold { color: var(--eu-gold); }
+.eco-cells {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 6px;
+    margin-top: 3px;
+    font-size: 8px;
+    color: var(--eu-muted);
+}
+.eco-cell b { color: var(--eu-text); }
+.eco-plus { color: #6fbf73; }
+.eco-minus { color: #cf6a5a; }

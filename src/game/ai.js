@@ -73,15 +73,9 @@ export class AIController {
         const reachable = state.reachableTiles(army);
         if (reachable.size === 0) return;
 
-        const size = state.generator.size;
-        const distance = tile => {
-            const ax = army.tile % size, ay = Math.floor(army.tile / size);
-            const bx = tile % size, by = Math.floor(tile / size);
-            return Math.abs(ax - bx) + Math.abs(ay - by);
-        };
-        let best = null, bestDistance = distance(army.tile);
+        let best = null, bestDistance = state.generator.tileDistance(army.tile, target);
         for (const tile of reachable.keys()) {
-            const d = distance(tile, target);
+            const d = state.generator.tileDistance(tile, target);
             if (d < bestDistance) { bestDistance = d; best = tile; }
         }
         if (best !== null) state.moveArmy(army.id, best);
@@ -91,14 +85,14 @@ export class AIController {
     pickTarget(army, culture) {
         const state = this.state;
         const generator = state.generator;
-        const size = generator.size;
+        const distance = (a, b) => generator.tileDistance(a, b);
 
         // 1. Ближайший чужой отряд фракции, с которой мы в состоянии войны.
         let best = null, bestDistance = Infinity;
         for (const other of state.armies) {
             if (other.faction === army.faction) continue;
             if (state.relationLevel(army.faction, other.faction) !== 'war') continue;
-            const d = this.tileDistance(army.tile, other.tile, size);
+            const d = distance(army.tile, other.tile);
             if (d < bestDistance) { bestDistance = d; best = other.tile; }
         }
         if (best !== null) return best;
@@ -107,7 +101,7 @@ export class AIController {
         for (const i of generator.landTiles) {
             const owner = generator.factionId[i];
             if (owner === army.faction) continue;
-            const d = this.tileDistance(army.tile, i, size);
+            const d = distance(army.tile, i);
             if (d < bestDistance) { bestDistance = d; best = i; }
         }
 
@@ -115,14 +109,10 @@ export class AIController {
         if (culture.ether > 0.7) {
             for (const i of generator.landTiles) {
                 if (generator.resource[i] !== 4) continue;   // Resource.ETHER
-                const d = this.tileDistance(army.tile, i, size);
+                const d = distance(army.tile, i);
                 if (d < bestDistance) { bestDistance = d; best = i; }
             }
         }
         return best;
-    }
-
-    tileDistance(a, b, size) {
-        return Math.abs(a % size - b % size) + Math.abs(Math.floor(a / size) - Math.floor(b / size));
     }
 }

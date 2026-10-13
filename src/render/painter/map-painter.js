@@ -6,6 +6,8 @@ import { base } from './layers/base.js';
 import { coast } from './layers/coast.js';
 import { borders } from './layers/borders.js';
 import { factions } from './layers/factions.js';
+import { fortresses } from './layers/fortresses.js';
+import { armyOverlay } from './layers/army-overlay.js';
 import { grading } from './layers/grading.js';
 import { hills } from './layers/hills.js';
 import { minerals } from './layers/minerals.js';
@@ -52,11 +54,13 @@ export class MapPainter {
             grassDensity: 1,       // густота пучков травы (множитель)
             shores: true,          // пляжи, каменистые берега и утёсы
             settlements: true,     // поселения (домики)
+            fortresses: true,      // крепости фракций
             roads: true,           // дороги между поселениями
             settlementMinHouses: 1, // домиков в самом маленьком поселении
             settlementMaxHouses: 3, // домиков в клетке высшего уровня (если они помещаются)
             settlementOverflow: 0.25, // на сколько (доля клетки) основание дома может выйти за границу своей клетки
             spriteOutline: false,  // тёмный контур вокруг построек, руд и эфира (в стиле dark fantasy выключен)
+            factionOverlayAlpha: 0.42, // 0..1: насколько сильно режим «Фракции» подкрашивает клетки цветом фракции
             grade: true,           // в тёмном стиле: цветокоррекция, туман, виньетка
             vignette: 0.35,        // затемнение к краям карты в тёмном стиле (0 — нет)
             props: true,           // в тёмном стиле: кости, вороны, развалины, виселицы
@@ -78,7 +82,7 @@ export class MapPainter {
     // view: 'terrain' | 'temperature' | 'regions'. Возвращает холст с готовой картой.
     // relations — Map «ключ пары фракций -> уровень отношений» ('war' | 'neutral' | 'ally'): им красится граница.
     // viewerFaction — чья карта: в режиме «Политика» свои земли, союзники, враги и нейтралы красятся по-разному.
-    paint({ view, seasonName, showBorders, showFactions, mood, relations, viewerFaction }) {
+    paint({ view, seasonName, showBorders, showFactions, mood, relations, viewerFaction, reachable, zoc }) {
         this.view = view;
         this.relations = relations || null;
         this.viewerFaction = viewerFaction | 0;
@@ -121,6 +125,10 @@ export class MapPainter {
 
         if (terrain && this.mood === 'dark' && this.options.grade) this.applyGrading();
         for (const draw of this.emissive) draw();
+
+        // Зона отряда — самый верхний слой: подсветка клеток не должна прятаться под постройками,
+        // кострами или туманом. Рисуется по сетке клеток (см. painter/layers/army-overlay.js).
+        if (reachable || zoc) this.paintArmyOverlay(reachable, zoc, this.map.size);
 
         this.ctx.putImageData(image, 0, 0);
         return this.canvas;
@@ -183,4 +191,4 @@ export class MapPainter {
     }
 }
 
-Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers, texture, grading, props, roads, settlements, minerals, borders, factions, scene, vegetation);
+Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers, texture, grading, props, roads, settlements, minerals, borders, factions, fortresses, armyOverlay, scene, vegetation);

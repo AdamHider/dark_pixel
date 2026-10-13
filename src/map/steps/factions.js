@@ -35,6 +35,11 @@ export const factions = {
         this.collectFactionRegions(regionIds);
         this.assignIslandsByProximity(regionIds);
 
+        // Владения бывают только на суше: вода и реки фракциям не принадлежат.
+        for (let i = 0; i < this.terrain.length; i++) {
+            if (!this.isLand(i)) this.factionId[i] = -1;
+        }
+
         // Итоги по фракциям (для интерфейса): сколько клеток, регионов и населения.
         this.countFactionSizes();
     },
@@ -252,9 +257,5 @@ export const factions = {
     factionName(id) {
         const names = this.options.factionNames;
         return (names && names[id % names.length]) || `Фракция ${id + 1}`;
-    },
-
-    getFactionInfo(factionId) {
-        return this.factions[factionId] || null;
     }
 };

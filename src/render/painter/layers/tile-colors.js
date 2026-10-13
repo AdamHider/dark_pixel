@@ -1,4 +1,5 @@
 import { clamp } from '../../../core/math.js';
+import { pairKey } from '../../../core/pairs.js';
 import { Biome, Terrain } from '../../../map/constants.js';
 import { hslToPacked, mixPacked, shadeFast, shadePacked } from '../../color.js';
 import { ICE_TEMPERATURE, SNOW_TEMPERATURE, STEP_AMOUNTS, waterShadeIndex } from '../constants.js';
@@ -39,23 +40,27 @@ export const tileColors = {
             return hslToPacked(hue, 60, isWater ? 36 : 52);
         }
         if (isWater) return this.waterColor(i);
-        if (this.view === 'factions') {
-            const f = this.map.factionId ? this.map.factionId[i] : -1;
-            if (f >= 0) return this.factionColor(f);
-        }
         if (this.view === 'diplomacy' && !isWater) {
             const f = this.map.factionId ? this.map.factionId[i] : -1;
             if (f >= 0) {
                 if (f === this.viewerFaction) return this.factionColor(f);
-                const level = this.relations ? this.relations.get(this.relationKey(f, this.viewerFaction)) : 'neutral';
+                const level = this.relations ? this.relations.get(pairKey(f, this.viewerFaction)) : 'neutral';
                 if (level === 'war') return this.colors.factionWar;
                 if (level === 'ally') return this.colors.factionAlly;
                 return this.colors.factionNeutral;
             }
         }
         if (this.view === 'regions') return hslToPacked((map.regionId[i] * 137.5) % 360, 45, 58); // «золотой угол»: соседи разного цвета
-        if (terrain === Terrain.MOUNTAIN) return this.packed.rock; // под рельефом — камень
-        return this.groundColor(i);
+
+        const color = terrain === Terrain.MOUNTAIN ? this.packed.rock : this.groundColor(i); // под рельефом — камень
+
+        /* Режим «Фракции» — это подсветка (overlay): рельеф остаётся виден, а поверх него клетка мягко
+           подкрашивается цветом своей фракции. Вода никогда не принадлежит фракции, поэтому её не трогаем. */
+        if (this.view === 'factions') {
+            const f = map.factionId ? map.factionId[i] : -1;
+            if (f >= 0) return mixPacked(color, this.factionColor(f), this.options.factionOverlayAlpha);
+        }
+        return color;
     },
 
     // Вода темнее по мере удаления от берега — и в океане, и в озёрах. В холод у берега появляется лёд.

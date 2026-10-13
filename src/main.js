@@ -5,6 +5,7 @@
 import { MapGenerator } from './map/map-generator.js';
 import { MapRenderer } from './render/renderer/map-renderer.js';
 import { GameState } from './game/game-state.js';
+import { RESOURCE_KINDS } from './game/economy.js';
 import { bindChoiceGroup, bindPanelToggles, bindToggle } from './ui/controls.js';
 import { demoObjects } from './ui/demo-objects.js';
 import { describeRegion, describeStats, describeTile } from './ui/describe.js';
@@ -43,7 +44,8 @@ const seedInput = document.getElementById('seed');
 const gameState = new GameState(generator);
 const sectionsPanel = createSectionsPanel(gameState, {
     onChange: () => syncGame(),
-    renderDiplomacy: () => renderDiplomacy()
+    renderDiplomacy: () => renderDiplomacy(),
+    renderEconomy: () => renderEconomy()
 });
 renderer.setArmyModel(gameState);
 
@@ -75,6 +77,33 @@ function relationName(level) {
     return { war: 'война', ally: 'союз', neutral: 'нейтрально' }[level] || level;
 }
 
+// Карточки экономики: у каждой фракции — казна, население и приток/баланс всех четырёх ресурсов карты.
+function renderEconomy() {
+    const rows = [];
+    for (let f = 0; f < gameState.factionCount; f++) {
+        const faction = gameState.factionInfo(f);
+        const flow = gameState.flowOf(f);
+        const you = f === gameState.playerFaction ? ' (вы)' : '';
+        const cells = RESOURCE_KINDS.map(kind => {
+            const value = flow.income[kind.key];
+            const balance = flow.balance[kind.key];
+            const cls = balance >= 0 ? 'eco-plus' : 'eco-minus';
+            return `<span class="eco-cell">${kind.icon} ${kind.name}: <b>${value}</b>
+                <i class="${cls}">(${balance >= 0 ? '+' : ''}${balance})</i></span>`;
+        }).join('');
+        rows.push(`
+            <div class="eco-card">
+                <div class="eco-head">
+                    <span class="diplo-swatch" style="background:${gameState.cultureColor(f)}"></span>
+                    <span class="diplo-name">${faction ? faction.name : `Фракция ${f + 1}`}${you}</span>
+                    <span class="eco-gold">💰 ${gameState.treasury[f]}</span>
+                </div>
+                <div class="eco-cells">${cells}</div>
+            </div>`);
+    }
+    return `<div class="eco-list">${rows.join('')}</div>`;
+}
+
 // Единая синхронизация: после смены состояния обновляем слой армий и панели.
 function syncGame() {
     renderer.setViewerFaction(gameState.playerFaction);
@@ -104,7 +133,7 @@ renderer.onSelect = (tile, region) => {
     const army = renderer.armySelection;
     if (army && tile && gameState.canReach(army, tile.index)) {
         gameState.moveArmy(army.id, tile.index);
-        renderer.clearArmySelection();
+        renderer.refreshArmyZone();   // отряд на новом месте — пересчитать зону и обновить карту
         syncGame();
         info.textContent = `Отряд перешёл в (${tile.x}, ${tile.y}) · осталось ходов: ${army.moves}`;
         return;
@@ -150,6 +179,7 @@ bindChoiceGroup('view', view => renderer.setView(view));
 bindToggle('demo-objects', on => renderer.setObjects(on ? demoObjects(generator) : []));
 bindToggle('mood', on => renderer.setMood(on ? 'dark' : 'light'));
 bindToggle('settlements', on => renderer.setShowSettlements(on));
+bindToggle('fortresses', on => renderer.setShowFortresses(on));
 bindPanelToggles();
 
 // Кнопки разделов игры (Ходы, Экономика, Дипломатия, Армия).

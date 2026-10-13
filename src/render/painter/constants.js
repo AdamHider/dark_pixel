@@ -18,8 +18,6 @@ export const COLORS = {
     factionAlly: '#4f8f52',                   // цвет границы: фракции в союзе
     factionNeutral: '#cbb98f',                // цвет границы: нейтралитет
     armyBase: '#1b140d',                      // основание маркера армии
-    armyReach: 'rgba(255, 226, 122, 0.20)',   // заливка достижимых клеток
-    armyZoc: 'rgba(192, 57, 43, 0.55)',       // контур зоны контроля
     sand: '#dccb96',
     wetSand: '#b5a67c',
     pebbleLight: '#a9a59a',

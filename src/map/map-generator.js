@@ -5,6 +5,7 @@ import { DEFAULTS } from './defaults.js';
 import { climate } from './steps/climate.js';
 import { elevation } from './steps/elevation.js';
 import { factions } from './steps/factions.js';
+import { fortresses } from './steps/fortresses.js';
 import { regions } from './steps/regions.js';
 import { resources } from './steps/resources.js';
 import { rivers } from './steps/rivers.js';
@@ -52,6 +53,7 @@ export class MapGenerator {
         this.distributeWheat();
         this.placeSettlements();
         this.buildFactions();
+        this.placeFortresses();
         this.buildRoads();
         return this;
     }
@@ -113,6 +115,7 @@ export class MapGenerator {
         this.regionSizes = {};                        // id региона -> число клеток
         this.factionId = new Int16Array(count).fill(-1); // -1 — клетка вне фракции (вода), иначе id фракции
         this.factions = [];                           // по записи на фракцию: { id, name, regions, tiles, population }
+        this.fortresses = [];                         // крепости: { id, tile, regionId, factionId, kind } (kind: keep|coast|mountain)
         this.landTiles = [];                          // индексы всех клеток суши
     }
 
@@ -151,6 +154,13 @@ export class MapGenerator {
             }
         }
         return result;
+    }
+
+    // «Манхэттенское» расстояние между двумя клетками (в клетках, по сторонам, без диагоналей).
+    // Общий помощник для ИИ, армий и любых оценок «как далеко».
+    tileDistance(a, b) {
+        const size = this.size;
+        return Math.abs((a % size) - (b % size)) + Math.abs(Math.floor(a / size) - Math.floor(b / size));
     }
 
     /* ---------- Сводка по региону (для интерфейса) ---------- */
@@ -213,7 +223,8 @@ export class MapGenerator {
             regionId,
             regionSize: regionId >= 0 ? this.regionSizes[regionId] : 0,
             factionId: this.factionId[i],
-            factionName: this.factionId[i] >= 0 ? this.factionName(this.factionId[i]) : null
+            factionName: this.factionId[i] >= 0 ? this.factionName(this.factionId[i]) : null,
+            fortress: this.fortressByTile && this.fortressByTile[i] >= 0 ? this.fortresses[this.fortressByTile[i]] : null
         };
     }
 
@@ -226,4 +237,4 @@ export class MapGenerator {
     }
 }
 
-Object.assign(MapGenerator.prototype, elevation, terrain, climate, resources, rivers, regions, factions, settlements, roads);
+Object.assign(MapGenerator.prototype, elevation, terrain, climate, resources, rivers, regions, factions, settlements, fortresses, roads);

@@ -5,21 +5,19 @@
    между фракциями и отряды. Интерфейс (панель разделов) только читает это состояние и вызывает действия. */
 
 import { clamp } from '../core/math.js';
+import { pairKey } from '../core/pairs.js';
 import { AIController } from './ai.js';
 import { CULTURE_COLORS, cultureById } from './cultures.js';
+import { computeResourceFlow, countFactionResources } from './economy.js';
 
 // Настроек пока мало, поэтому держим их константами — легко вынести в defaults.js, когда понадобится.
 const START_TREASURY = 100;     // с какой казной начинает фракция
-const POPULATION_PER_GOLD = 40; // сколько населения даёт одну монету дохода за ход
-const ARMY_UPKEEP = 2;          // сколько золота в ход стоит один отряд
 const RELATION_MIN = -100;      // «война»
 const RELATION_MAX = 100;       // «союз»
 const ALLY_FROM = 40;           // отношение ≥ этого — союз
 const WAR_BELOW = -40;          // отношение ≤ этого — война
 const ARMY_RANGE = 3;           // на сколько клеток (по суше) отряд может пройти за один ход
 const ARMY_ZOC = 1;             // зона охвата/перехвата: соседние клетки вокруг отряда
-
-export const Diplomacy = Object.freeze({ WAR: 'war', NEUTRAL: 'neutral', ALLY: 'ally' });
 
 export class GameState {
     constructor(generator) {
@@ -42,17 +40,18 @@ export class GameState {
         this.armies = [];
         for (let f = 0; f < this.factionCount; f++) this.spawnArmy(f);
 
-        // Экономика: казна и доход каждой фракции (доход считает и содержание отрядов — потому после армий).
+        // Экономика: казна, доход (золото) и полный поток ресурсов карты для каждой фракции.
         this.treasury = [];
         this.income = [];
+        this.resourceFlow = [];
         for (let f = 0; f < this.factionCount; f++) {
             this.treasury[f] = START_TREASURY;
-            this.income[f] = this.monthlyIncome(f);
+            this.resourceFlow[f] = this.computeFlow(f);
+            this.income[f] = this.resourceFlow[f].balance.gold;   // «доход» в интерфейсе — это баланс золота
         }
 
-        // ИИ неигровых фракций и «кисть» цвета фракции (обитатель отдаёт наружу, если умеет).
+        // ИИ неигровых фракций.
         this.ai = new AIController(this);
-        this.tint = generator.factionColor ? generator.factionColor.bind(generator) : () => undefined;
     }
 
     /* ---------- Ходы ---------- */
@@ -69,7 +68,8 @@ export class GameState {
     advanceTurn() {
         for (let f = 0; f < this.factionCount; f++) {
             this.treasury[f] += this.income[f];
-            this.income[f] = this.monthlyIncome(f);
+            this.resourceFlow[f] = this.computeFlow(f);
+            this.income[f] = this.resourceFlow[f].balance.gold;
         }
         this.currentFaction = this.factionCount > 0 ? (this.currentFaction + 1) % this.factionCount : 0;
         if (this.currentFaction === 0) this.turn++;
@@ -78,12 +78,41 @@ export class GameState {
 
     /* ---------- Экономика ---------- */
 
-    // Доход фракции за ход: население её регионов минус содержание отрядов.
-    monthlyIncome(factionId) {
+    /* Поток ресурсов фракции за ход: { income, upkeep, balance } по еде, производству, населению и золоту.
+       Считает по клеткам карты, поэтому «ресурсы карты» (поля, лес, руда, эфир, поселения) сразу видны в экономике.
+
+       ФОРМУЛА ВЫНЕСЕНА ОТДЕЛЬНО. По умолчанию берётся computeResourceFlow из src/game/economy.js, но её можно
+       заменить своей функцией, не трогая ничего больше:
+           gameState.resourceFlowFormula = ctx => ({ income, upkeep, balance });
+       Контекст: { generator, factionId, counts, population, armies }.
+       counts — массив «сколько каких ресурсных клеток» (индекс — код Resource), population — население фракции. */
+    resourceFlowFormula = computeResourceFlow;
+
+    computeFlow(factionId) {
         const faction = this.factionInfo(factionId);
         const population = faction ? faction.population : 0;
-        const upkeep = this.armies.filter(a => a.faction === factionId).length * ARMY_UPKEEP;
-        return Math.max(1, Math.round(population / POPULATION_PER_GOLD) - upkeep);
+        const armies = this.armies.filter(a => a.faction === factionId).length;
+        const counts = countFactionResources(this.generator, factionId);
+        return this.resourceFlowFormula({ generator: this.generator, factionId, counts, population, armies });
+    }
+
+    // Поток ресурсов фракции (готовый результат). Если ещё не считался — посчитает.
+    flowOf(factionId) {
+        return this.resourceFlow[factionId] || this.computeFlow(factionId);
+    }
+
+    // Пересчитать поток ресурсов у всех фракций (после изменения карты/армий).
+    refreshResources() {
+        for (let f = 0; f < this.factionCount; f++) {
+            this.resourceFlow[f] = this.computeFlow(f);
+            this.income[f] = this.resourceFlow[f].balance.gold;
+        }
+        return this.resourceFlow;
+    }
+
+    // Доход фракции за ход (золото). Оставлено для совместимости; это баланс золота из потока ресурсов.
+    monthlyIncome(factionId) {
+        return this.computeFlow(factionId).balance.gold;
     }
 
     factionInfo(factionId) {
@@ -106,7 +135,7 @@ export class GameState {
     }
 
     relationKey(a, b) {
-        return a < b ? `${a}|${b}` : `${b}|${a}`;
+        return pairKey(a, b);
     }
 
     // Культура фракции и её цвет — для панели дипломатии (синяя/чёрная/... с квадратиком цвета).
@@ -122,11 +151,11 @@ export class GameState {
 
     // Уровень отношений пары: 'war' | 'neutral' | 'ally' (по порогам WAR_BELOW / ALLY_FROM).
     relationLevel(a, b) {
-        if (a === b) return Diplomacy.ALLY;
+        if (a === b) return 'ally';
         const value = this.relation(a, b);
-        if (value <= WAR_BELOW) return Diplomacy.WAR;
-        if (value >= ALLY_FROM) return Diplomacy.ALLY;
-        return Diplomacy.NEUTRAL;
+        if (value <= WAR_BELOW) return 'war';
+        if (value >= ALLY_FROM) return 'ally';
+        return 'neutral';
     }
 
     // Все пары фракций с их уровнями отношений — ключ «a|b» -> 'war' | 'neutral' | 'ally' (для отрисовки границ).
@@ -178,20 +207,8 @@ export class GameState {
 
     // Все клетки, до которых отряд может дойти за свои очки движения (по суше, не через воду).
     reachableTiles(army) {
-        const start = army.tile;
-        const distance = new Map([[start, 0]]);
-        const queue = [start];
-        for (let head = 0; head < queue.length; head++) {
-            const tile = queue[head];
-            const step = distance.get(tile);
-            if (step >= army.moves) continue;
-            for (const next of this.generator.neighbors(tile)) {
-                if (!this.generator.isLand(next) || distance.has(next)) continue;
-                distance.set(next, step + 1);
-                queue.push(next);
-            }
-        }
-        distance.delete(start);
+        const distance = this.landDistances(army.tile, army.moves);
+        distance.delete(army.tile);   // стартовая клетка не считается «достижимой»
         return distance;
     }
 
@@ -210,6 +227,11 @@ export class GameState {
 
     // Все клетки в радиусе radius (по суше) вокруг стартовой.
     neighborsWithin(start, radius) {
+        return this.landDistances(start, radius).keys();
+    }
+
+    // Обход суши в ширину: клетка -> число шагов от start (не дальше radius). Общий для двух методов выше.
+    landDistances(start, radius) {
         const distance = new Map([[start, 0]]);
         const queue = [start];
         for (let head = 0; head < queue.length; head++) {
@@ -222,7 +244,7 @@ export class GameState {
                 queue.push(next);
             }
         }
-        return distance.keys();
+        return distance;
     }
 
     // Переместить отряд, потратив очки движения на пройденный путь (заготовка без учёта перехвата).

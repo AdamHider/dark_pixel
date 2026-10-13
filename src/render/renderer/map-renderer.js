@@ -7,6 +7,9 @@ import { input } from './input.js';
 import { objects } from './objects.js';
 import { selection } from './selection.js';
 
+// Модель отдаёт достижимую зону как Map (ключ — клетка), но рисованию нужен только набор клеток.
+const normalizeZone = zone => (zone && zone.size ? new Set(zone.keys ? zone.keys() : zone) : null);
+
 /* ============================================================
    MapRenderer — камера и взаимодействие с картой.
    Сама карта рисуется в MapPainter один раз в большой скрытый холст (buffer) в масштабе 1:1.
@@ -43,6 +46,8 @@ export class MapRenderer {
         this.objects = [];         // объекты на карте: города, армии... (см. setObjects)
         this.armies = [];          // армии игрока и соперников (см. setArmies)
         this.armySelection = null; // выбранная армия для показа достижимой зоны
+        this.armyReachable = null; // Set клеток достижимой зоны выбранного отряда (запекается в буфер)
+        this.armyZoc = null;       // Set клеток зоны контроля выбранного отряда (запекается в буфер)
         this.relations = null;     // Map «ключ пары -> 'war'|'neutral'|'ally'» для цвета границ
         this.viewerFaction = 0;    // чья карта в режиме «Политика»
         this.onObjectClick = null; // функция (object) => void — клик по объекту
@@ -64,6 +69,9 @@ export class MapRenderer {
     // Вызывать после каждой новой генерации карты.
     refresh() {
         this.selection = null;
+        this.armySelection = null;
+        this.armyReachable = null;
+        this.armyZoc = null;
         this.rebuildBuffer();
         this.fitToView();
     }
@@ -94,6 +102,12 @@ export class MapRenderer {
         this.draw();
     }
 
+    setShowFortresses(show) {
+        this.painter.options.fortresses = show;
+        this.rebuildBuffer();
+        this.draw();
+    }
+
     setShowBorders(show) {
         this.showBorders = show;
         this.rebuildBuffer();
@@ -110,8 +124,26 @@ export class MapRenderer {
         this.buffer = this.painter.paint({
             view: this.view, seasonName: this.seasonName,
             showBorders: this.showBorders, showFactions: this.showFactions, mood: this.mood,
-            relations: this.relations, viewerFaction: this.viewerFaction
+            relations: this.relations, viewerFaction: this.viewerFaction,
+            reachable: this.armyReachable, zoc: this.armyZoc
         });
+    }
+
+    // Достижимая зона и зона контроля выбранного отряда: запекаются в буфер карты (см. painter/layers/army-overlay.js).
+    setArmyZone(reachable, zoc) {
+        this.armyReachable = normalizeZone(reachable);
+        this.armyZoc = normalizeZone(zoc);
+        this.rebuildBuffer();
+        this.draw();
+    }
+
+    // Пересчитать зону по выбранному отряду и обновить карту. Модель даёт reachableTiles/zoneOfControl.
+    refreshArmyZone() {
+        if (this.armySelection && this.armyModel) {
+            this.setArmyZone(this.armyModel.reachableTiles(this.armySelection), this.armyModel.zoneOfControl(this.armySelection));
+        } else {
+            this.setArmyZone(null, null);
+        }
     }
 
     // Чья карта в режиме «Политика» (индекс фракции игрока).

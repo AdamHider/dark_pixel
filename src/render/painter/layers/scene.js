@@ -42,6 +42,12 @@ export const scene = {
         });
 
         if (this.mood === 'dark' && this.options.props) this.collectProps(items);
+        if (this.options.fortresses && map.fortresses) {
+            for (const fortress of map.fortresses) {
+                const x = fortress.tile % map.size, y = Math.floor(fortress.tile / map.size);
+                items.push({ y: y * T + Math.round(T * 0.9), x: x * T, draw: () => this.drawFortress(x, y, fortress) });
+            }
+        }
 
         items.sort((a, b) => a.y - b.y || a.x - b.x);
         return items;
