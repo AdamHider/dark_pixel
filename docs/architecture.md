@@ -35,13 +35,13 @@ export const elevation = {
 };
 
 // src/map/map-generator.js
-Object.assign(MapGenerator.prototype, elevation, terrain, climate, resources, rivers, regions, settlements, roads);
+Object.assign(MapGenerator.prototype, elevation, terrain, climate, resources, rivers, regions, factions, settlements, roads);
 ```
 
 То же для рисования (`src/render/painter/map-painter.js`):
 
 ```js
-Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers, texture, grading, props, roads, settlements, minerals, borders, scene, vegetation);
+Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers, texture, grading, props, roads, settlements, minerals, borders, factions, scene, vegetation);
 ```
 
 **Практический вывод.** Чтобы добавить новый этап генерации (или слой рисования), не нужно трогать большой
@@ -117,6 +117,7 @@ if (terrain) {
 }
 this.paintTexture();       // 7. крапинки, волны, цветы, листва
 if (showBorders) this.paintRegionBorders();   // 8. границы регионов
+if (showFactions) this.paintFactionBorders(); // 8b. границы фракций
 if (terrain) this.paintScene();               // 9. декорации (деревья, дома, руда) — снизу вверх
 if (dark) this.applyGrading();                // 10. цветокоррекция, туман, виньетка
 for (const draw of this.emissive) draw();     // 11. источники света (окна, костры, эфир)

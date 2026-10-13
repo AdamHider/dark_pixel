@@ -5,6 +5,7 @@
    между фракциями и отряды. Интерфейс (панель разделов) только читает это состояние и вызывает действия. */
 
 import { clamp } from '../core/math.js';
+import { pairKey } from '../core/pairs.js';
 import { AIController } from './ai.js';
 import { CULTURE_COLORS, cultureById } from './cultures.js';
 
@@ -18,8 +19,6 @@ const ALLY_FROM = 40;           // отношение ≥ этого — сою�
 const WAR_BELOW = -40;          // отношение ≤ этого — война
 const ARMY_RANGE = 3;           // на сколько клеток (по суше) отряд может пройти за один ход
 const ARMY_ZOC = 1;             // зона охвата/перехвата: соседние клетки вокруг отряда
-
-export const Diplomacy = Object.freeze({ WAR: 'war', NEUTRAL: 'neutral', ALLY: 'ally' });
 
 export class GameState {
     constructor(generator) {
@@ -50,9 +49,8 @@ export class GameState {
             this.income[f] = this.monthlyIncome(f);
         }
 
-        // ИИ неигровых фракций и «кисть» цвета фракции (обитатель отдаёт наружу, если умеет).
+        // ИИ неигровых фракций.
         this.ai = new AIController(this);
-        this.tint = generator.factionColor ? generator.factionColor.bind(generator) : () => undefined;
     }
 
     /* ---------- Ходы ---------- */
@@ -106,7 +104,7 @@ export class GameState {
     }
 
     relationKey(a, b) {
-        return a < b ? `${a}|${b}` : `${b}|${a}`;
+        return pairKey(a, b);
     }
 
     // Культура фракции и её цвет — для панели дипломатии (синяя/чёрная/... с квадратиком цвета).
@@ -122,11 +120,11 @@ export class GameState {
 
     // Уровень отношений пары: 'war' | 'neutral' | 'ally' (по порогам WAR_BELOW / ALLY_FROM).
     relationLevel(a, b) {
-        if (a === b) return Diplomacy.ALLY;
+        if (a === b) return 'ally';
         const value = this.relation(a, b);
-        if (value <= WAR_BELOW) return Diplomacy.WAR;
-        if (value >= ALLY_FROM) return Diplomacy.ALLY;
-        return Diplomacy.NEUTRAL;
+        if (value <= WAR_BELOW) return 'war';
+        if (value >= ALLY_FROM) return 'ally';
+        return 'neutral';
     }
 
     // Все пары фракций с их уровнями отношений — ключ «a|b» -> 'war' | 'neutral' | 'ally' (для отрисовки границ).
@@ -178,20 +176,8 @@ export class GameState {
 
     // Все клетки, до которых отряд может дойти за свои очки движения (по суше, не через воду).
     reachableTiles(army) {
-        const start = army.tile;
-        const distance = new Map([[start, 0]]);
-        const queue = [start];
-        for (let head = 0; head < queue.length; head++) {
-            const tile = queue[head];
-            const step = distance.get(tile);
-            if (step >= army.moves) continue;
-            for (const next of this.generator.neighbors(tile)) {
-                if (!this.generator.isLand(next) || distance.has(next)) continue;
-                distance.set(next, step + 1);
-                queue.push(next);
-            }
-        }
-        distance.delete(start);
+        const distance = this.landDistances(army.tile, army.moves);
+        distance.delete(army.tile);   // стартовая клетка не считается «достижимой»
         return distance;
     }
 
@@ -210,6 +196,11 @@ export class GameState {
 
     // Все клетки в радиусе radius (по суше) вокруг стартовой.
     neighborsWithin(start, radius) {
+        return this.landDistances(start, radius).keys();
+    }
+
+    // Обход суши в ширину: клетка -> число шагов от start (не дальше radius). Общий для двух методов выше.
+    landDistances(start, radius) {
         const distance = new Map([[start, 0]]);
         const queue = [start];
         for (let head = 0; head < queue.length; head++) {
@@ -222,7 +213,7 @@ export class GameState {
                 queue.push(next);
             }
         }
-        return distance.keys();
+        return distance;
     }
 
     // Переместить отряд, потратив очки движения на пройденный путь (заготовка без учёта перехвата).

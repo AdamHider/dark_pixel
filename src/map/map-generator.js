@@ -153,6 +153,13 @@ export class MapGenerator {
         return result;
     }
 
+    // «Манхэттенское» расстояние между двумя клетками (в клетках, по сторонам, без диагоналей).
+    // Общий помощник для ИИ, армий и любых оценок «как далеко».
+    tileDistance(a, b) {
+        const size = this.size;
+        return Math.abs((a % size) - (b % size)) + Math.abs(Math.floor(a / size) - Math.floor(b / size));
+    }
+
     /* ---------- Сводка по региону (для интерфейса) ---------- */
 
     getRegionInfo(regionId) {

@@ -1,3 +1,4 @@
+import { pairKey } from '../../../core/pairs.js';
 import { mixPacked } from '../../color.js';
 import { hashUnit } from '../noise.js';
 
@@ -83,15 +84,10 @@ export const factions = {
         }
     },
 
-    // Ключ пары фракций, одинаковый при любом порядке (как в GameState.relationKey).
-    relationKey(a, b) {
-        return a < b ? `${a}|${b}` : `${b}|${a}`;
-    },
-
     // Цвет дип. статуса пары фракций (или null, если отношение нейтрально).
     diplomacyColor(a, b) {
         if (!this.relations) return null;
-        const level = this.relations.get(this.relationKey(a, b));
+        const level = this.relations.get(pairKey(a, b));
         if (level === 'war') return this.colors.factionWar;
         if (level === 'ally') return this.colors.factionAlly;
         if (level === 'neutral') return this.colors.factionNeutral;

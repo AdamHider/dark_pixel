@@ -1,4 +1,5 @@
 import { clamp } from '../../../core/math.js';
+import { pairKey } from '../../../core/pairs.js';
 import { Biome, Terrain } from '../../../map/constants.js';
 import { hslToPacked, mixPacked, shadeFast, shadePacked } from '../../color.js';
 import { ICE_TEMPERATURE, SNOW_TEMPERATURE, STEP_AMOUNTS, waterShadeIndex } from '../constants.js';
@@ -43,7 +44,7 @@ export const tileColors = {
             const f = this.map.factionId ? this.map.factionId[i] : -1;
             if (f >= 0) {
                 if (f === this.viewerFaction) return this.factionColor(f);
-                const level = this.relations ? this.relations.get(this.relationKey(f, this.viewerFaction)) : 'neutral';
+                const level = this.relations ? this.relations.get(pairKey(f, this.viewerFaction)) : 'neutral';
                 if (level === 'war') return this.colors.factionWar;
                 if (level === 'ally') return this.colors.factionAlly;
                 return this.colors.factionNeutral;

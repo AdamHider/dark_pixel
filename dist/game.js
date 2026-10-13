@@ -657,9 +657,6 @@
     factionName(id) {
       const names = this.options.factionNames;
       return names && names[id % names.length] || `\u0424\u0440\u0430\u043A\u0446\u0438\u044F ${id + 1}`;
-    },
-    getFactionInfo(factionId) {
-      return this.factions[factionId] || null;
     }
   };
 
@@ -1722,6 +1719,12 @@
       }
       return result;
     }
+    // «Манхэттенское» расстояние между двумя клетками (в клетках, по сторонам, без диагоналей).
+    // Общий помощник для ИИ, армий и любых оценок «как далеко».
+    tileDistance(a, b) {
+      const size = this.size;
+      return Math.abs(a % size - b % size) + Math.abs(Math.floor(a / size) - Math.floor(b / size));
+    }
     /* ---------- Сводка по региону (для интерфейса) ---------- */
     getRegionInfo(regionId) {
       if (regionId < 0) return null;
@@ -2644,6 +2647,9 @@
     }
   };
 
+  // src/core/pairs.js
+  var pairKey = (a, b) => a < b ? `${a}|${b}` : `${b}|${a}`;
+
   // src/render/painter/layers/factions.js
   var factions2 = {
     factionNoise(gx, gy) {
@@ -2717,14 +2723,10 @@
         }
       }
     },
-    // Ключ пары фракций, одинаковый при любом порядке (как в GameState.relationKey).
-    relationKey(a, b) {
-      return a < b ? `${a}|${b}` : `${b}|${a}`;
-    },
     // Цвет дип. статуса пары фракций (или null, если отношение нейтрально).
     diplomacyColor(a, b) {
       if (!this.relations) return null;
-      const level = this.relations.get(this.relationKey(a, b));
+      const level = this.relations.get(pairKey(a, b));
       if (level === "war") return this.colors.factionWar;
       if (level === "ally") return this.colors.factionAlly;
       if (level === "neutral") return this.colors.factionNeutral;
@@ -4452,7 +4454,7 @@
         const f = this.map.factionId ? this.map.factionId[i] : -1;
         if (f >= 0) {
           if (f === this.viewerFaction) return this.factionColor(f);
-          const level = this.relations ? this.relations.get(this.relationKey(f, this.viewerFaction)) : "neutral";
+          const level = this.relations ? this.relations.get(pairKey(f, this.viewerFaction)) : "neutral";
           if (level === "war") return this.colors.factionWar;
           if (level === "ally") return this.colors.factionAlly;
           return this.colors.factionNeutral;
@@ -5734,15 +5736,9 @@
       if (target === null) return;
       const reachable = state.reachableTiles(army);
       if (reachable.size === 0) return;
-      const size = state.generator.size;
-      const distance = (tile) => {
-        const ax = army.tile % size, ay = Math.floor(army.tile / size);
-        const bx = tile % size, by = Math.floor(tile / size);
-        return Math.abs(ax - bx) + Math.abs(ay - by);
-      };
-      let best = null, bestDistance = distance(army.tile);
+      let best = null, bestDistance = state.generator.tileDistance(army.tile, target);
       for (const tile of reachable.keys()) {
-        const d = distance(tile, target);
+        const d = state.generator.tileDistance(tile, target);
         if (d < bestDistance) {
           bestDistance = d;
           best = tile;
@@ -5754,12 +5750,12 @@
     pickTarget(army, culture) {
       const state = this.state;
       const generator2 = state.generator;
-      const size = generator2.size;
+      const distance = (a, b) => generator2.tileDistance(a, b);
       let best = null, bestDistance = Infinity;
       for (const other of state.armies) {
         if (other.faction === army.faction) continue;
         if (state.relationLevel(army.faction, other.faction) !== "war") continue;
-        const d = this.tileDistance(army.tile, other.tile, size);
+        const d = distance(army.tile, other.tile);
         if (d < bestDistance) {
           bestDistance = d;
           best = other.tile;
@@ -5769,7 +5765,7 @@
       for (const i of generator2.landTiles) {
         const owner = generator2.factionId[i];
         if (owner === army.faction) continue;
-        const d = this.tileDistance(army.tile, i, size);
+        const d = distance(army.tile, i);
         if (d < bestDistance) {
           bestDistance = d;
           best = i;
@@ -5778,7 +5774,7 @@
       if (culture.ether > 0.7) {
         for (const i of generator2.landTiles) {
           if (generator2.resource[i] !== 4) continue;
-          const d = this.tileDistance(army.tile, i, size);
+          const d = distance(army.tile, i);
           if (d < bestDistance) {
             bestDistance = d;
             best = i;
@@ -5786,9 +5782,6 @@
         }
       }
       return best;
-    }
-    tileDistance(a, b, size) {
-      return Math.abs(a % size - b % size) + Math.abs(Math.floor(a / size) - Math.floor(b / size));
     }
   };
 
@@ -5802,7 +5795,6 @@
   var WAR_BELOW = -40;
   var ARMY_RANGE = 3;
   var ARMY_ZOC = 1;
-  var Diplomacy = Object.freeze({ WAR: "war", NEUTRAL: "neutral", ALLY: "ally" });
   var GameState = class {
     constructor(generator2) {
       this.generator = generator2;
@@ -5825,7 +5817,6 @@
         this.income[f] = this.monthlyIncome(f);
       }
       this.ai = new AIController(this);
-      this.tint = generator2.factionColor ? generator2.factionColor.bind(generator2) : () => void 0;
     }
     /* ---------- Ходы ---------- */
     // Полный ход: каждая фракция получает доход и действует. За игрока действует интерфейс, за остальных — ИИ.
@@ -5869,7 +5860,7 @@
       this.relations.set(key, clamp((this.relations.get(key) || 0) + delta, RELATION_MIN, RELATION_MAX));
     }
     relationKey(a, b) {
-      return a < b ? `${a}|${b}` : `${b}|${a}`;
+      return pairKey(a, b);
     }
     // Культура фракции и её цвет — для панели дипломатии (синяя/чёрная/... с квадратиком цвета).
     cultureOf(factionId) {
@@ -5882,11 +5873,11 @@
     }
     // Уровень отношений пары: 'war' | 'neutral' | 'ally' (по порогам WAR_BELOW / ALLY_FROM).
     relationLevel(a, b) {
-      if (a === b) return Diplomacy.ALLY;
+      if (a === b) return "ally";
       const value = this.relation(a, b);
-      if (value <= WAR_BELOW) return Diplomacy.WAR;
-      if (value >= ALLY_FROM) return Diplomacy.ALLY;
-      return Diplomacy.NEUTRAL;
+      if (value <= WAR_BELOW) return "war";
+      if (value >= ALLY_FROM) return "ally";
+      return "neutral";
     }
     // Все пары фракций с их уровнями отношений — ключ «a|b» -> 'war' | 'neutral' | 'ally' (для отрисовки границ).
     relationLevels() {
@@ -5930,20 +5921,8 @@
     }
     // Все клетки, до которых отряд может дойти за свои очки движения (по суше, не через воду).
     reachableTiles(army) {
-      const start = army.tile;
-      const distance = /* @__PURE__ */ new Map([[start, 0]]);
-      const queue = [start];
-      for (let head = 0; head < queue.length; head++) {
-        const tile = queue[head];
-        const step = distance.get(tile);
-        if (step >= army.moves) continue;
-        for (const next of this.generator.neighbors(tile)) {
-          if (!this.generator.isLand(next) || distance.has(next)) continue;
-          distance.set(next, step + 1);
-          queue.push(next);
-        }
-      }
-      distance.delete(start);
+      const distance = this.landDistances(army.tile, army.moves);
+      distance.delete(army.tile);
       return distance;
     }
     canReach(army, tile) {
@@ -5959,6 +5938,10 @@
     }
     // Все клетки в радиусе radius (по суше) вокруг стартовой.
     neighborsWithin(start, radius) {
+      return this.landDistances(start, radius).keys();
+    }
+    // Обход суши в ширину: клетка -> число шагов от start (не дальше radius). Общий для двух методов выше.
+    landDistances(start, radius) {
       const distance = /* @__PURE__ */ new Map([[start, 0]]);
       const queue = [start];
       for (let head = 0; head < queue.length; head++) {
@@ -5971,7 +5954,7 @@
           queue.push(next);
         }
       }
-      return distance.keys();
+      return distance;
     }
     // Переместить отряд, потратив очки движения на пройденный путь (заготовка без учёта перехвата).
     moveArmy(id, tile) {
