@@ -6,6 +6,7 @@ const TERRAIN_NAMES = ['глубокая вода', 'мелководье', 'р�
 const BIOME_NAMES = ['тундра', 'тайга', 'равнина', 'степь', 'пустыня', 'саванна', 'мёртвые земли', 'земли эфира'];
 const RESOURCE_NAMES = ['', 'дерево', 'пшеница', 'золотая руда', 'эфир', 'железная руда', 'поселение'];
 const CROSSING_NAMES = ['', 'брод', 'каменный мост'];
+const FORTRESS_NAMES = { keep: 'сторожевой пост', coast: 'порт-крепость', mountain: 'горная твердыня' };
 
 function temperatureName(t) {
     if (t < 0.25) return 'холодно';
@@ -24,6 +25,7 @@ export function describeTile(tile) {
     if (tile.resource !== Resource.NONE && tile.resource !== Resource.SETTLEMENT) parts.push(`ресурс: ${RESOURCE_NAMES[tile.resource]}`);
     if (tile.resource === Resource.SETTLEMENT) parts.push(`население ${tile.population} (уровень ${tile.settlementLevel}, группа из ${tile.settlementGroupSize} кл.)`);
     if (tile.roadLevel > 0) parts.push('дорога');
+    if (tile.fortress) parts.push(`крепость: ${FORTRESS_NAMES[tile.fortress.kind] || tile.fortress.kind}`);
     if (tile.regionId >= 0) parts.push(`регион #${tile.regionId}, ${tile.regionSize} кв.`);
     if (tile.factionName) parts.push(`фракция: ${tile.factionName}`);
     return parts.join(' · ');

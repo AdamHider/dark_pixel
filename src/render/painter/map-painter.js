@@ -6,6 +6,7 @@ import { base } from './layers/base.js';
 import { coast } from './layers/coast.js';
 import { borders } from './layers/borders.js';
 import { factions } from './layers/factions.js';
+import { fortresses } from './layers/fortresses.js';
 import { grading } from './layers/grading.js';
 import { hills } from './layers/hills.js';
 import { minerals } from './layers/minerals.js';
@@ -52,6 +53,7 @@ export class MapPainter {
             grassDensity: 1,       // густота пучков травы (множитель)
             shores: true,          // пляжи, каменистые берега и утёсы
             settlements: true,     // поселения (домики)
+            fortresses: true,      // крепости фракций
             roads: true,           // дороги между поселениями
             settlementMinHouses: 1, // домиков в самом маленьком поселении
             settlementMaxHouses: 3, // домиков в клетке высшего уровня (если они помещаются)
@@ -184,4 +186,4 @@ export class MapPainter {
     }
 }
 
-Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers, texture, grading, props, roads, settlements, minerals, borders, factions, scene, vegetation);
+Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers, texture, grading, props, roads, settlements, minerals, borders, factions, fortresses, scene, vegetation);

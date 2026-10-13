@@ -228,6 +228,9 @@
     // минимум клеток между группами поселений
     wheatMinPerRegion: 2,
     // в каждом подходящем регионе — не меньше стольких полей (равномерность)
+    // --- крепости ---
+    fortresses: true,
+    // ставить ли крепости (по одной на регион, на границе владений)
     // --- дороги между поселениями ---
     roads: true,
     roadNeighbors: 3,
@@ -657,6 +660,70 @@
     factionName(id) {
       const names = this.options.factionNames;
       return names && names[id % names.length] || `\u0424\u0440\u0430\u043A\u0446\u0438\u044F ${id + 1}`;
+    }
+  };
+
+  // src/map/steps/fortresses.js
+  var fortresses = {
+    // Одна крепость на регион — у самой «опасной» (пограничной) клетки. Вызывается после buildFactions.
+    placeFortresses() {
+      this.fortresses = [];
+      this.fortressByTile = new Int16Array(this.terrain.length).fill(-1);
+      if (!this.factions || this.factions.length === 0 || this.options.fortresses === false) return;
+      let nextId = 0;
+      for (const regionId of Object.keys(this.regionSizes).map(Number)) {
+        const tiles = this.regionTilesLookup(regionId);
+        if (tiles.length === 0) continue;
+        const factionId = this.factionId[tiles[0]];
+        if (factionId < 0) continue;
+        let best = -1, bestScore = -Infinity;
+        for (const i of tiles) {
+          if (!this.isFrontier(i, factionId)) continue;
+          const score = this.fortressScore(i, factionId);
+          if (score > bestScore) {
+            bestScore = score;
+            best = i;
+          }
+        }
+        if (best < 0) continue;
+        this.fortressByTile[best] = nextId;
+        this.fortresses.push({
+          id: nextId++,
+          tile: best,
+          regionId,
+          factionId,
+          kind: this.fortressKind(best)
+        });
+      }
+    },
+    // Рубеж ли это: рядом чужая земля (граница владений) или вода (побережье).
+    isFrontier(i, factionId) {
+      for (const j of this.neighbors(i)) {
+        if (!this.isLand(j) || this.factionId[j] !== factionId) return true;
+      }
+      return false;
+    },
+    // Насколько клетка годится под крепость: граница владений, вода и горы рядом — большой плюс, ресурс — минус.
+    fortressScore(i, factionId) {
+      let score = 0;
+      for (const j of this.neighbors(i)) {
+        if (!this.isLand(j)) {
+          score += 1.5;
+          continue;
+        }
+        if (this.terrain[j] === Terrain.MOUNTAIN) score += 1;
+        if (this.factionId[j] !== factionId) score += 3;
+      }
+      if (this.terrain[i] === Terrain.MOUNTAIN) score += 0.6;
+      if (this.resource[i] !== Resource.NONE) score -= 2;
+      return score;
+    },
+    // Тип крепости по окружению: у воды — порт, в горах — твердыня, иначе — сторожевой пост.
+    fortressKind(i) {
+      for (const j of this.neighbors(i)) {
+        if (!this.isLand(j)) return "coast";
+      }
+      return this.terrain[i] === Terrain.MOUNTAIN ? "mountain" : "keep";
     }
   };
 
@@ -1626,6 +1693,7 @@
       this.distributeWheat();
       this.placeSettlements();
       this.buildFactions();
+      this.placeFortresses();
       this.buildRoads();
       return this;
     }
@@ -1685,6 +1753,7 @@
       this.regionSizes = {};
       this.factionId = new Int16Array(count).fill(-1);
       this.factions = [];
+      this.fortresses = [];
       this.landTiles = [];
     }
     /* ---------- Вспомогательные методы для работы с клетками ---------- */
@@ -1785,7 +1854,8 @@
         regionId,
         regionSize: regionId >= 0 ? this.regionSizes[regionId] : 0,
         factionId: this.factionId[i],
-        factionName: this.factionId[i] >= 0 ? this.factionName(this.factionId[i]) : null
+        factionName: this.factionId[i] >= 0 ? this.factionName(this.factionId[i]) : null,
+        fortress: this.fortressByTile && this.fortressByTile[i] >= 0 ? this.fortresses[this.fortressByTile[i]] : null
       };
     }
     get landShare() {
@@ -1795,7 +1865,7 @@
       return Object.keys(this.regionSizes).length;
     }
   };
-  Object.assign(MapGenerator.prototype, elevation, terrain, climate, resources, rivers, regions, factions, settlements, roads);
+  Object.assign(MapGenerator.prototype, elevation, terrain, climate, resources, rivers, regions, factions, settlements, fortresses, roads);
 
   // src/render/color.js
   var packRgb = (r, g, b) => 4278190080 | b << 16 | g << 8 | r;
@@ -2734,6 +2804,110 @@
     }
   };
 
+  // src/render/painter/pixel-buffer.js
+  var PixelBuffer = class {
+    constructor(width, height) {
+      this.width = width;
+      this.height = height;
+      this.data = new Int32Array(width * height);
+    }
+    put(x, y, color) {
+      if (x >= 0 && y >= 0 && x < this.width && y < this.height) this.data[y * this.width + x] = color;
+    }
+    rect(x, y, w, h, color) {
+      for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) this.put(xx, yy, color);
+    }
+    // Эллипс с объёмом: слева сверху светлее, справа снизу темнее.
+    ellipse(cx, cy, rx, ry, base2, light, dark) {
+      for (let y = Math.floor(cy - ry); y <= Math.ceil(cy + ry); y++) {
+        for (let x = Math.floor(cx - rx); x <= Math.ceil(cx + rx); x++) {
+          const nx = (x + 0.5 - cx) / rx, ny = (y + 0.5 - cy) / ry;
+          if (nx * nx + ny * ny > 1) continue;
+          const lean = nx + ny;
+          this.put(x, y, lean < -0.45 ? light : lean > 0.5 ? dark : base2);
+        }
+      }
+    }
+    // Контур вокруг силуэта: прозрачные пиксели, у которых есть закрашенный сосед.
+    outline(color) {
+      const { width, height, data } = this;
+      const edge = [];
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          if (data[y * width + x] !== 0) continue;
+          const touches = x > 0 && data[y * width + x - 1] !== 0 || x < width - 1 && data[y * width + x + 1] !== 0 || y > 0 && data[(y - 1) * width + x] !== 0 || y < height - 1 && data[(y + 1) * width + x] !== 0;
+          if (touches) edge.push(y * width + x);
+        }
+      }
+      for (const index of edge) data[index] = color;
+    }
+  };
+
+  // src/render/painter/layers/fortresses.js
+  var fortresses2 = {
+    // Один спрайт на (вид, фракция, стиль, сезон): знамя берёт цвет фракции, стены приглушаются в тёмном стиле.
+    fortressSprite(kind, factionId) {
+      if (!this.spriteCache) this.spriteCache = /* @__PURE__ */ new Map();
+      const key = ["fortress", kind, factionId, this.mood, this.season.name].join("|");
+      const cached = this.spriteCache.get(key);
+      if (cached) return cached;
+      const c = this.colors;
+      const stone = this.moodize(c.stone);
+      const stoneDark = this.moodize(c.stoneShadow);
+      const flag = this.factionColor(factionId);
+      const tall = kind === "mountain";
+      const width = this.pxMin(tall ? 12 : 13);
+      const height = this.pxMin(tall ? 16 : 13);
+      const buffer = new PixelBuffer(width, height);
+      const mid = width >> 1;
+      const floor = height - 2;
+      const bodyWidth = this.pxMin(tall ? 7 : 9);
+      const bodyHeight = this.pxMin(tall ? 10 : 6);
+      const left = mid - (bodyWidth >> 1);
+      const top = floor - bodyHeight;
+      buffer.rect(left, top, bodyWidth, bodyHeight, stone);
+      buffer.rect(left, top, 1, bodyHeight, shadePacked(stone, 0.14));
+      buffer.rect(left + bodyWidth - 1, top, 1, bodyHeight, shadePacked(stone, -0.22));
+      buffer.rect(left, floor - 1, bodyWidth, 1, shadePacked(stone, -0.18));
+      for (let x = left; x < left + bodyWidth; x += 2) {
+        buffer.rect(x, top - this.pxMin(2), 1, this.pxMin(2), stone);
+      }
+      const gateWidth = this.pxMin(2), gateHeight = this.pxMin(3);
+      buffer.rect(mid - (gateWidth >> 1), floor - gateHeight, gateWidth, gateHeight, packRgb(48, 34, 22));
+      if (kind === "coast") {
+        const pierY = floor - this.pxMin(2);
+        buffer.rect(left + bodyWidth, pierY, this.pxMin(4), 1, this.moodize(c.plank));
+        buffer.rect(left + bodyWidth, pierY + 1, 1, this.pxMin(2), shadePacked(this.moodize(c.plank), -0.2));
+      }
+      if (tall) {
+        buffer.ellipse(mid, floor, this.pxMin(5), this.pxMin(2), stoneDark, stone, stoneDark);
+      }
+      const poleX = left + bodyWidth - 1;
+      const poleTop = top - this.pxMin(tall ? 6 : 5);
+      buffer.rect(poleX, poleTop, 1, top - poleTop, stoneDark);
+      buffer.rect(poleX + 1, poleTop + 1, this.pxMin(3), this.pxMin(2), flag);
+      if (this.options.spriteOutline) buffer.outline(c.outline);
+      const sprite = { buffer, width, height, anchorX: mid, anchorY: floor + 1 };
+      this.spriteCache.set(key, sprite);
+      return sprite;
+    },
+    drawFortress(x, y, fortress) {
+      const T = this.tileSize;
+      const sprite = this.fortressSprite(fortress.kind, fortress.factionId);
+      const cx = x * T + Math.round(T / 2) + Math.round((hashUnit(x, y, 60) - 0.5) * 0.15 * T);
+      const base2 = y * T + Math.round(T * 0.86) - this.liftAtTile(x, y);
+      this.drawBuildingShadow(cx, base2, this.px(8), this.px(7));
+      this.blitSprite(sprite.buffer, cx - sprite.anchorX, base2 - sprite.anchorY);
+      const lightX = cx - sprite.anchorX + (sprite.width >> 1);
+      const lightY = base2 - sprite.anchorY + sprite.height - this.pxMin(4);
+      this.emissive.push(() => this.drawLight(lightX, lightY, this.colors.window, this.colors.fire, this.mood === "dark" ? 2 : 1));
+    },
+    // Свечение знамени в тёмном стиле (чтобы крепость читалась на тёмной карте).
+    fortressBannerGlow(fortress) {
+      return mixPacked(this.factionColor(fortress.factionId), packRgb(255, 255, 255), 0.25);
+    }
+  };
+
   // src/render/painter/layers/grading.js
   var grading = {
     // Приглушает цвет построек в тёмном стиле.
@@ -2937,45 +3111,6 @@
       }
       this.hillCache = { source: map.elevation, tileSize: T, height };
       return height;
-    }
-  };
-
-  // src/render/painter/pixel-buffer.js
-  var PixelBuffer = class {
-    constructor(width, height) {
-      this.width = width;
-      this.height = height;
-      this.data = new Int32Array(width * height);
-    }
-    put(x, y, color) {
-      if (x >= 0 && y >= 0 && x < this.width && y < this.height) this.data[y * this.width + x] = color;
-    }
-    rect(x, y, w, h, color) {
-      for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) this.put(xx, yy, color);
-    }
-    // Эллипс с объёмом: слева сверху светлее, справа снизу темнее.
-    ellipse(cx, cy, rx, ry, base2, light, dark) {
-      for (let y = Math.floor(cy - ry); y <= Math.ceil(cy + ry); y++) {
-        for (let x = Math.floor(cx - rx); x <= Math.ceil(cx + rx); x++) {
-          const nx = (x + 0.5 - cx) / rx, ny = (y + 0.5 - cy) / ry;
-          if (nx * nx + ny * ny > 1) continue;
-          const lean = nx + ny;
-          this.put(x, y, lean < -0.45 ? light : lean > 0.5 ? dark : base2);
-        }
-      }
-    }
-    // Контур вокруг силуэта: прозрачные пиксели, у которых есть закрашенный сосед.
-    outline(color) {
-      const { width, height, data } = this;
-      const edge = [];
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-          if (data[y * width + x] !== 0) continue;
-          const touches = x > 0 && data[y * width + x - 1] !== 0 || x < width - 1 && data[y * width + x + 1] !== 0 || y > 0 && data[(y - 1) * width + x] !== 0 || y < height - 1 && data[(y + 1) * width + x] !== 0;
-          if (touches) edge.push(y * width + x);
-        }
-      }
-      for (const index of edge) data[index] = color;
     }
   };
 
@@ -3844,6 +3979,12 @@
         }
       });
       if (this.mood === "dark" && this.options.props) this.collectProps(items);
+      if (this.options.fortresses && map.fortresses) {
+        for (const fortress of map.fortresses) {
+          const x = fortress.tile % map.size, y = Math.floor(fortress.tile / map.size);
+          items.push({ y: y * T + Math.round(T * 0.9), x: x * T, draw: () => this.drawFortress(x, y, fortress) });
+        }
+      }
       items.sort((a, b) => a.y - b.y || a.x - b.x);
       return items;
     }
@@ -4684,6 +4825,8 @@
         // пляжи, каменистые берега и утёсы
         settlements: true,
         // поселения (домики)
+        fortresses: true,
+        // крепости фракций
         roads: true,
         // дороги между поселениями
         settlementMinHouses: 1,
@@ -4815,7 +4958,7 @@
       return points;
     }
   };
-  Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers2, texture, grading, props, roads2, settlements2, minerals, borders, factions2, scene, vegetation);
+  Object.assign(MapPainter.prototype, base, coast, tileColors, hills, shores, relief, rivers2, texture, grading, props, roads2, settlements2, minerals, borders, factions2, fortresses2, scene, vegetation);
 
   // src/sprites/sprite-examples.js
   var SPRITE_EXAMPLES = {
@@ -5586,6 +5729,11 @@
       this.rebuildBuffer();
       this.draw();
     }
+    setShowFortresses(show) {
+      this.painter.options.fortresses = show;
+      this.rebuildBuffer();
+      this.draw();
+    }
     setShowBorders(show) {
       this.showBorders = show;
       this.rebuildBuffer();
@@ -5785,10 +5933,61 @@
     }
   };
 
+  // src/game/economy.js
+  var RESOURCE_YIELD = Object.freeze({
+    [Resource.WHEAT]: { food: 2 },
+    [Resource.WOOD]: { production: 1 },
+    [Resource.IRON]: { production: 2 },
+    [Resource.ETHER]: { production: 2 },
+    [Resource.GOLD]: { gold: 3 },
+    [Resource.SETTLEMENT]: { gold: 1 }
+    // население поселения считается отдельно — из map.population
+  });
+  var FOOD_PER_POPULATION = 0.05;
+  var GOLD_PER_POPULATION = 0.02;
+  var PRODUCTION_PER_ARMY = 4;
+  var RESOURCE_KINDS = Object.freeze([
+    Object.freeze({ key: "food", name: "\u0415\u0434\u0430", icon: "\u{1F33E}" }),
+    Object.freeze({ key: "production", name: "\u041F\u0440\u043E\u0438\u0437\u0432\u043E\u0434\u0441\u0442\u0432\u043E", icon: "\u{1F528}" }),
+    Object.freeze({ key: "population", name: "\u041D\u0430\u0441\u0435\u043B\u0435\u043D\u0438\u0435", icon: "\u{1F465}" }),
+    Object.freeze({ key: "gold", name: "\u0417\u043E\u043B\u043E\u0442\u043E", icon: "\u{1F4B0}" })
+  ]);
+  function countFactionResources(generator2, factionId) {
+    const counts = new Array(Resource.SETTLEMENT + 1).fill(0);
+    const factionId_of = generator2.factionId;
+    if (!factionId_of) return counts;
+    for (const i of generator2.landTiles) {
+      if (factionId_of[i] !== factionId) continue;
+      counts[generator2.resource[i]]++;
+    }
+    return counts;
+  }
+  function computeResourceFlow({ counts, population, armies: armies2 }) {
+    const income = { food: 0, production: 0, population: 0, gold: 0 };
+    for (let code = 1; code < counts.length; code++) {
+      const count = counts[code];
+      if (!count) continue;
+      const yield_ = RESOURCE_YIELD[code];
+      if (!yield_) continue;
+      income.food += (yield_.food || 0) * count;
+      income.production += (yield_.production || 0) * count;
+      income.gold += (yield_.gold || 0) * count;
+    }
+    income.population = population;
+    const upkeep = {
+      food: Math.round(population * FOOD_PER_POPULATION),
+      production: armies2 * PRODUCTION_PER_ARMY,
+      population: 0,
+      // население — запас, а не расход
+      gold: Math.round(population * GOLD_PER_POPULATION)
+    };
+    const balance = {};
+    for (const { key } of RESOURCE_KINDS) balance[key] = income[key] - upkeep[key];
+    return { income, upkeep, balance };
+  }
+
   // src/game/game-state.js
   var START_TREASURY = 100;
-  var POPULATION_PER_GOLD = 40;
-  var ARMY_UPKEEP = 2;
   var RELATION_MIN = -100;
   var RELATION_MAX = 100;
   var ALLY_FROM = 40;
@@ -5812,9 +6011,11 @@
       for (let f = 0; f < this.factionCount; f++) this.spawnArmy(f);
       this.treasury = [];
       this.income = [];
+      this.resourceFlow = [];
       for (let f = 0; f < this.factionCount; f++) {
         this.treasury[f] = START_TREASURY;
-        this.income[f] = this.monthlyIncome(f);
+        this.resourceFlow[f] = this.computeFlow(f);
+        this.income[f] = this.resourceFlow[f].balance.gold;
       }
       this.ai = new AIController(this);
     }
@@ -5830,19 +6031,45 @@
     advanceTurn() {
       for (let f = 0; f < this.factionCount; f++) {
         this.treasury[f] += this.income[f];
-        this.income[f] = this.monthlyIncome(f);
+        this.resourceFlow[f] = this.computeFlow(f);
+        this.income[f] = this.resourceFlow[f].balance.gold;
       }
       this.currentFaction = this.factionCount > 0 ? (this.currentFaction + 1) % this.factionCount : 0;
       if (this.currentFaction === 0) this.turn++;
       return this.turn;
     }
     /* ---------- Экономика ---------- */
-    // Доход фракции за ход: население её регионов минус содержание отрядов.
-    monthlyIncome(factionId) {
+    /* Поток ресурсов фракции за ход: { income, upkeep, balance } по еде, производству, населению и золоту.
+           Считает по клеткам карты, поэтому «ресурсы карты» (поля, лес, руда, эфир, поселения) сразу видны в экономике.
+    
+           ФОРМУЛА ВЫНЕСЕНА ОТДЕЛЬНО. По умолчанию берётся computeResourceFlow из src/game/economy.js, но её можно
+           заменить своей функцией, не трогая ничего больше:
+               gameState.resourceFlowFormula = ctx => ({ income, upkeep, balance });
+           Контекст: { generator, factionId, counts, population, armies }.
+           counts — массив «сколько каких ресурсных клеток» (индекс — код Resource), population — население фракции. */
+    resourceFlowFormula = computeResourceFlow;
+    computeFlow(factionId) {
       const faction = this.factionInfo(factionId);
       const population = faction ? faction.population : 0;
-      const upkeep = this.armies.filter((a) => a.faction === factionId).length * ARMY_UPKEEP;
-      return Math.max(1, Math.round(population / POPULATION_PER_GOLD) - upkeep);
+      const armies2 = this.armies.filter((a) => a.faction === factionId).length;
+      const counts = countFactionResources(this.generator, factionId);
+      return this.resourceFlowFormula({ generator: this.generator, factionId, counts, population, armies: armies2 });
+    }
+    // Поток ресурсов фракции (готовый результат). Если ещё не считался — посчитает.
+    flowOf(factionId) {
+      return this.resourceFlow[factionId] || this.computeFlow(factionId);
+    }
+    // Пересчитать поток ресурсов у всех фракций (после изменения карты/армий).
+    refreshResources() {
+      for (let f = 0; f < this.factionCount; f++) {
+        this.resourceFlow[f] = this.computeFlow(f);
+        this.income[f] = this.resourceFlow[f].balance.gold;
+      }
+      return this.resourceFlow;
+    }
+    // Доход фракции за ход (золото). Оставлено для совместимости; это баланс золота из потока ресурсов.
+    monthlyIncome(factionId) {
+      return this.computeFlow(factionId).balance.gold;
     }
     factionInfo(factionId) {
       return this.generator.factions ? this.generator.factions[factionId] || null : null;
@@ -6018,6 +6245,7 @@
   var BIOME_NAMES = ["\u0442\u0443\u043D\u0434\u0440\u0430", "\u0442\u0430\u0439\u0433\u0430", "\u0440\u0430\u0432\u043D\u0438\u043D\u0430", "\u0441\u0442\u0435\u043F\u044C", "\u043F\u0443\u0441\u0442\u044B\u043D\u044F", "\u0441\u0430\u0432\u0430\u043D\u043D\u0430", "\u043C\u0451\u0440\u0442\u0432\u044B\u0435 \u0437\u0435\u043C\u043B\u0438", "\u0437\u0435\u043C\u043B\u0438 \u044D\u0444\u0438\u0440\u0430"];
   var RESOURCE_NAMES = ["", "\u0434\u0435\u0440\u0435\u0432\u043E", "\u043F\u0448\u0435\u043D\u0438\u0446\u0430", "\u0437\u043E\u043B\u043E\u0442\u0430\u044F \u0440\u0443\u0434\u0430", "\u044D\u0444\u0438\u0440", "\u0436\u0435\u043B\u0435\u0437\u043D\u0430\u044F \u0440\u0443\u0434\u0430", "\u043F\u043E\u0441\u0435\u043B\u0435\u043D\u0438\u0435"];
   var CROSSING_NAMES = ["", "\u0431\u0440\u043E\u0434", "\u043A\u0430\u043C\u0435\u043D\u043D\u044B\u0439 \u043C\u043E\u0441\u0442"];
+  var FORTRESS_NAMES = { keep: "\u0441\u0442\u043E\u0440\u043E\u0436\u0435\u0432\u043E\u0439 \u043F\u043E\u0441\u0442", coast: "\u043F\u043E\u0440\u0442-\u043A\u0440\u0435\u043F\u043E\u0441\u0442\u044C", mountain: "\u0433\u043E\u0440\u043D\u0430\u044F \u0442\u0432\u0435\u0440\u0434\u044B\u043D\u044F" };
   function temperatureName(t) {
     if (t < 0.25) return "\u0445\u043E\u043B\u043E\u0434\u043D\u043E";
     if (t < 0.5) return "\u043F\u0440\u043E\u0445\u043B\u0430\u0434\u043D\u043E";
@@ -6033,6 +6261,7 @@
     if (tile.resource !== Resource.NONE && tile.resource !== Resource.SETTLEMENT) parts.push(`\u0440\u0435\u0441\u0443\u0440\u0441: ${RESOURCE_NAMES[tile.resource]}`);
     if (tile.resource === Resource.SETTLEMENT) parts.push(`\u043D\u0430\u0441\u0435\u043B\u0435\u043D\u0438\u0435 ${tile.population} (\u0443\u0440\u043E\u0432\u0435\u043D\u044C ${tile.settlementLevel}, \u0433\u0440\u0443\u043F\u043F\u0430 \u0438\u0437 ${tile.settlementGroupSize} \u043A\u043B.)`);
     if (tile.roadLevel > 0) parts.push("\u0434\u043E\u0440\u043E\u0433\u0430");
+    if (tile.fortress) parts.push(`\u043A\u0440\u0435\u043F\u043E\u0441\u0442\u044C: ${FORTRESS_NAMES[tile.fortress.kind] || tile.fortress.kind}`);
     if (tile.regionId >= 0) parts.push(`\u0440\u0435\u0433\u0438\u043E\u043D #${tile.regionId}, ${tile.regionSize} \u043A\u0432.`);
     if (tile.factionName) parts.push(`\u0444\u0440\u0430\u043A\u0446\u0438\u044F: ${tile.factionName}`);
     return parts.join(" \xB7 ");
@@ -6061,6 +6290,16 @@
     const faction = state.factionInfo(id);
     return faction ? faction.name : `\u0424\u0440\u0430\u043A\u0446\u0438\u044F ${id + 1}`;
   }
+  function resourceLine(state, factionId, kind) {
+    const flow = state.flowOf(factionId);
+    if (!flow) return null;
+    const balance = flow.balance[kind.key];
+    const sign = balance >= 0 ? "+" : "";
+    return `${kind.icon} ${kind.name}: ${NUMBER.format(flow.income[kind.key])} (${sign}${balance}/\u0445\u043E\u0434)`;
+  }
+  function resourceLines(state, factionId) {
+    return RESOURCE_KINDS.map((kind) => resourceLine(state, factionId, kind)).filter(Boolean);
+  }
   var SECTIONS = [
     {
       id: "turns",
@@ -6083,19 +6322,18 @@
       id: "economy",
       title: "\u042D\u043A\u043E\u043D\u043E\u043C\u0438\u043A\u0430",
       icon: "\u{1F4B0}",
+      // Экономика рисуется разметкой (карточка на фракцию с ресурсами), см. ui/sections-panel.js.
+      html: "economy",
       summary(state) {
         if (state.factionCount === 0) return ["\u041D\u0430 \u043A\u0430\u0440\u0442\u0435 \u043D\u0435\u0442 \u0444\u0440\u0430\u043A\u0446\u0438\u0439."];
-        return state.generator.factions.map((faction, f) => {
-          const sign = state.income[f] >= 0 ? "+" : "";
-          return `${faction.name}: \u043A\u0430\u0437\u043D\u0430 ${NUMBER.format(state.treasury[f])} (${sign}${state.income[f]}/\u0445\u043E\u0434), \u043D\u0430\u0441\u0435\u043B\u0435\u043D\u0438\u0435 ${NUMBER.format(faction.population)}`;
-        });
+        return resourceLines(state, state.currentFaction);
       },
       actions: [
         { label: "\u0421\u043E\u0431\u0440\u0430\u0442\u044C \u043D\u0430\u043B\u043E\u0433\u0438", run(state) {
           state.treasury = state.treasury.map((t, f) => t + state.income[f]);
         } },
-        { label: "\u041F\u0435\u0440\u0435\u0441\u0447\u0438\u0442\u0430\u0442\u044C \u0434\u043E\u0445\u043E\u0434\u044B", run(state) {
-          state.income = state.income.map((_, f) => state.monthlyIncome(f));
+        { label: "\u041F\u0435\u0440\u0435\u0441\u0447\u0438\u0442\u0430\u0442\u044C \u0440\u0435\u0441\u0443\u0440\u0441\u044B", run(state) {
+          state.refreshResources();
         } }
       ]
     },
@@ -6160,6 +6398,10 @@
         summary.innerHTML = options.renderDiplomacy();
         return;
       }
+      if (section.html === "economy" && options.renderEconomy) {
+        summary.innerHTML = options.renderEconomy();
+        return;
+      }
       summary.textContent = section.summary(state).join("\n");
     }
     function renderActions(section) {
@@ -6178,9 +6420,20 @@
     function renderResources() {
       if (!resources2) return;
       const faction = state.factionInfo(state.currentFaction);
+      if (!faction) {
+        resources2.textContent = "\u0424\u0440\u0430\u043A\u0446\u0438\u0439 \u043D\u0435\u0442";
+        return;
+      }
+      const flow = state.flowOf(state.currentFaction);
       const gold = state.treasury[state.currentFaction] ?? 0;
-      const income = state.income[state.currentFaction] ?? 0;
-      resources2.textContent = faction ? `${faction.name} \xB7 \u{1F4B0} ${NUMBER2.format(gold)} (${income >= 0 ? "+" : ""}${income}) \xB7 \u{1F465} ${NUMBER2.format(faction.population)}` : "\u0424\u0440\u0430\u043A\u0446\u0438\u0439 \u043D\u0435\u0442";
+      const parts = [`${faction.name} \xB7 \u{1F4B0} ${NUMBER2.format(gold)}`];
+      for (const kind of RESOURCE_KINDS) {
+        if (kind.key === "gold") continue;
+        const value = flow.income[kind.key];
+        const balance = flow.balance[kind.key];
+        parts.push(`${kind.icon} ${NUMBER2.format(value)} (${balance >= 0 ? "+" : ""}${balance})`);
+      }
+      resources2.textContent = parts.join(" \xB7 ");
     }
     function refresh() {
       renderResources();
@@ -6240,7 +6493,8 @@
   var gameState = new GameState(generator);
   var sectionsPanel = createSectionsPanel(gameState, {
     onChange: () => syncGame(),
-    renderDiplomacy: () => renderDiplomacy()
+    renderDiplomacy: () => renderDiplomacy(),
+    renderEconomy: () => renderEconomy()
   });
   renderer.setArmyModel(gameState);
   function renderDiplomacy() {
@@ -6267,6 +6521,31 @@
   }
   function relationName(level) {
     return { war: "\u0432\u043E\u0439\u043D\u0430", ally: "\u0441\u043E\u044E\u0437", neutral: "\u043D\u0435\u0439\u0442\u0440\u0430\u043B\u044C\u043D\u043E" }[level] || level;
+  }
+  function renderEconomy() {
+    const rows = [];
+    for (let f = 0; f < gameState.factionCount; f++) {
+      const faction = gameState.factionInfo(f);
+      const flow = gameState.flowOf(f);
+      const you = f === gameState.playerFaction ? " (\u0432\u044B)" : "";
+      const cells = RESOURCE_KINDS.map((kind) => {
+        const value = flow.income[kind.key];
+        const balance = flow.balance[kind.key];
+        const cls = balance >= 0 ? "eco-plus" : "eco-minus";
+        return `<span class="eco-cell">${kind.icon} ${kind.name}: <b>${value}</b>
+                <i class="${cls}">(${balance >= 0 ? "+" : ""}${balance})</i></span>`;
+      }).join("");
+      rows.push(`
+            <div class="eco-card">
+                <div class="eco-head">
+                    <span class="diplo-swatch" style="background:${gameState.cultureColor(f)}"></span>
+                    <span class="diplo-name">${faction ? faction.name : `\u0424\u0440\u0430\u043A\u0446\u0438\u044F ${f + 1}`}${you}</span>
+                    <span class="eco-gold">\u{1F4B0} ${gameState.treasury[f]}</span>
+                </div>
+                <div class="eco-cells">${cells}</div>
+            </div>`);
+    }
+    return `<div class="eco-list">${rows.join("")}</div>`;
   }
   function syncGame() {
     renderer.setViewerFaction(gameState.playerFaction);
@@ -6328,6 +6607,7 @@ ${describeRegion(region)}` : `\u041A\u043B\u0435\u0442\u043A\u0430 ${describeTil
   bindToggle("demo-objects", (on) => renderer.setObjects(on ? demoObjects(generator) : []));
   bindToggle("mood", (on) => renderer.setMood(on ? "dark" : "light"));
   bindToggle("settlements", (on) => renderer.setShowSettlements(on));
+  bindToggle("fortresses", (on) => renderer.setShowFortresses(on));
   bindPanelToggles();
   for (const button of document.querySelectorAll("[data-section]")) {
     button.addEventListener("click", () => sectionsPanel.toggle(button.dataset.section));

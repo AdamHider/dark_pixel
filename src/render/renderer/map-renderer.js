@@ -94,6 +94,12 @@ export class MapRenderer {
         this.draw();
     }
 
+    setShowFortresses(show) {
+        this.painter.options.fortresses = show;
+        this.rebuildBuffer();
+        this.draw();
+    }
+
     setShowBorders(show) {
         this.showBorders = show;
         this.rebuildBuffer();

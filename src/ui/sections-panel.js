@@ -1,6 +1,7 @@
 /* Панель разделов игры: рисует SECTIONS для текущего GameState и обновляет строку ресурсов сверху. */
 
 import { SECTIONS } from '../game/sections.js';
+import { RESOURCE_KINDS } from '../game/economy.js';
 
 const NUMBER = new Intl.NumberFormat('ru-RU');
 
@@ -20,6 +21,10 @@ export function createSectionsPanel(state, options = {}) {
     function renderSummary(section) {
         if (section.html === 'diplomacy' && options.renderDiplomacy) {
             summary.innerHTML = options.renderDiplomacy();
+            return;
+        }
+        if (section.html === 'economy' && options.renderEconomy) {
+            summary.innerHTML = options.renderEconomy();
             return;
         }
         summary.textContent = section.summary(state).join('\n');
@@ -42,11 +47,20 @@ export function createSectionsPanel(state, options = {}) {
     function renderResources() {
         if (!resources) return;
         const faction = state.factionInfo(state.currentFaction);
+        if (!faction) {
+            resources.textContent = 'Фракций нет';
+            return;
+        }
+        const flow = state.flowOf(state.currentFaction);
         const gold = state.treasury[state.currentFaction] ?? 0;
-        const income = state.income[state.currentFaction] ?? 0;
-        resources.textContent = faction
-            ? `${faction.name} · 💰 ${NUMBER.format(gold)} (${income >= 0 ? '+' : ''}${income}) · 👥 ${NUMBER.format(faction.population)}`
-            : 'Фракций нет';
+        const parts = [`${faction.name} · 💰 ${NUMBER.format(gold)}`];
+        for (const kind of RESOURCE_KINDS) {
+            if (kind.key === 'gold') continue;                 // золото уже показано казной
+            const value = flow.income[kind.key];
+            const balance = flow.balance[kind.key];
+            parts.push(`${kind.icon} ${NUMBER.format(value)} (${balance >= 0 ? '+' : ''}${balance})`);
+        }
+        resources.textContent = parts.join(' · ');
     }
 
     // Перерисовать всё по текущему состоянию.

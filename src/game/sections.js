@@ -5,11 +5,27 @@
    добавляется одной записью здесь, без правок интерфейса. Метод `summary(state)` возвращает строки,
    `actions(state)` — кнопки `{ label, run(state) }`. */
 
+import { RESOURCE_KINDS } from './economy.js';
+
 const NUMBER = new Intl.NumberFormat('ru-RU');
 
 function factionName(state, id) {
     const faction = state.factionInfo(id);
     return faction ? faction.name : `Фракция ${id + 1}`;
+}
+
+// Одна строка вида «🌾 Еда: 12 (+8/ход)» из потока ресурсов фракции.
+function resourceLine(state, factionId, kind) {
+    const flow = state.flowOf(factionId);
+    if (!flow) return null;
+    const balance = flow.balance[kind.key];
+    const sign = balance >= 0 ? '+' : '';
+    return `${kind.icon} ${kind.name}: ${NUMBER.format(flow.income[kind.key])} (${sign}${balance}/ход)`;
+}
+
+// Строки по всем четырём ресурсам карты (еда, производство, население, золото).
+function resourceLines(state, factionId) {
+    return RESOURCE_KINDS.map(kind => resourceLine(state, factionId, kind)).filter(Boolean);
 }
 
 export const SECTIONS = [
@@ -32,16 +48,15 @@ export const SECTIONS = [
         id: 'economy',
         title: 'Экономика',
         icon: '💰',
+        // Экономика рисуется разметкой (карточка на фракцию с ресурсами), см. ui/sections-panel.js.
+        html: 'economy',
         summary(state) {
             if (state.factionCount === 0) return ['На карте нет фракций.'];
-            return state.generator.factions.map((faction, f) => {
-                const sign = state.income[f] >= 0 ? '+' : '';
-                return `${faction.name}: казна ${NUMBER.format(state.treasury[f])} (${sign}${state.income[f]}/ход), население ${NUMBER.format(faction.population)}`;
-            });
+            return resourceLines(state, state.currentFaction);
         },
         actions: [
             { label: 'Собрать налоги', run(state) { state.treasury = state.treasury.map((t, f) => t + state.income[f]); } },
-            { label: 'Пересчитать доходы', run(state) { state.income = state.income.map((_, f) => state.monthlyIncome(f)); } }
+            { label: 'Пересчитать ресурсы', run(state) { state.refreshResources(); } }
         ]
     },
     {
